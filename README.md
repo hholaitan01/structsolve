@@ -53,7 +53,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/structsolve.git
+git clone https://github.com/hholaitan01/structsolve.git
 cd structsolve
 
 # Create a virtual environment
@@ -157,7 +157,7 @@ Pull requests welcome. For major changes, please open an issue first.
 
 ## 📄 Licence
 
-MIT — free to use, modify, and distribute.
+Apache 2.0 License
 
 ---
 
