@@ -822,10 +822,7 @@ def _draw_frame_general(nodes, members, nmap, results=None, loads=None):
     ax.set_ylabel("y (m)", fontsize=8, color=TXT)
 
     colours = [TEAL, YEL, GRN, RED, "#BB88FF", "#FF9966", "#66BBFF", "#FF66BB"]
-    # geometry span (used for scaling arrows, labels, etc.)
-    all_x = [n["x"] for n in nodes]
-    all_y = [n["y"] for n in nodes]
-    span = max(max(all_x) - min(all_x), max(all_y) - min(all_y), 1.0)
+
     # BMD scale
     if results:
         all_m = [abs(v) for tup in results.values() for v in tup if tup]
@@ -877,16 +874,27 @@ def _draw_frame_general(nodes, members, nmap, results=None, loads=None):
                         ax.text(ax2 + px * arrow_sc * 1.7, ay2 + py * arrow_sc * 1.7,
                                 f"{ld['mag']} kN", color=RED, fontsize=7, ha="center")
 
-        # BMD overlay
+        # BMD overlay — use actual computed moment distribution (parabolic for UDL)
         if results and mem["id"] in results:
             Mij, Mji = results[mem["id"]]
             Lm = float(np.hypot(xj - xi, yj - yi))
             if Lm > 0:
                 dx2, dy2 = (xj - xi) / Lm, (yj - yi) / Lm
                 px2, py2 = -dy2, dx2
-                ts = np.linspace(0, 1, 40)
-                bx = [xi + t * (xj - xi) + (Mij * (1 - t) + Mji * t) * bmd_sc * px2 for t in ts]
-                by = [yi + t * (yj - yi) + (Mij * (1 - t) + Mji * t) * bmd_sc * py2 for t in ts]
+                # Use actual moment distribution from solver
+                try:
+                    from frame_solver import GeneralFrameSolver
+                    mem_loads_for_diag = [ld for ld in (loads or []) if ld["member_id"] == mem["id"]]
+                    xs_d, _, M_d = GeneralFrameSolver.get_member_diagram(
+                        mem, nmap, Mij, Mji, mem_loads_for_diag, n_pts=60)
+                    # Convert local x to global coords + BMD offset
+                    bx = [xi + (xs_d[k]/Lm)*(xj-xi) + M_d[k]*bmd_sc*px2 for k in range(len(xs_d))]
+                    by = [yi + (xs_d[k]/Lm)*(yj-yi) + M_d[k]*bmd_sc*py2 for k in range(len(xs_d))]
+                except Exception:
+                    # Fallback: linear interpolation
+                    ts = np.linspace(0, 1, 40)
+                    bx = [xi+t*(xj-xi)+(Mij*(1-t)+Mji*t)*bmd_sc*px2 for t in ts]
+                    by = [yi+t*(yj-yi)+(Mij*(1-t)+Mji*t)*bmd_sc*py2 for t in ts]
                 ax.fill([xi] + bx + [xj, xi],
                         [yi] + by + [yj, yi],
                         alpha=0.15, color=c, zorder=2)
@@ -983,10 +991,11 @@ def frame_page():
     tpl_names = [
         "Portal — fixed",
         "Portal — pinned",
-        "L-Frame (Image 1)",
-        "4\u00b0 Indet. (Image 2)",
+        "L-Frame",
+        "4\u00b0 Indet.",
         "Multi-bay",
-        "Propped cantilever",
+        "Propped cant.",
+        "Cantilever arm",
     ]
     tc = st.columns(len(tpl_names))
     chosen = None
@@ -1122,7 +1131,32 @@ def frame_page():
         st.session_state.fr_result = None
         st.rerun()
 
-    # Sync live references
+    elif chosen == 6:   # Cantilever arm frame (Example 4 from image)
+        # A(fixed wall) — B(junction) — C(free cantilever tip)
+        #                              |
+        #                              E(pinned base)
+        # AB: L=4m, EI=2I; BC: L=2m, EI=2I; BE: L=4m, EI=I
+        # Loads: UDL 10kN/m on AB; 10kN point at C; 20kN horizontal on BE at 2m from B
+        st.session_state.fr_nodes = [
+            {"id":0,"x":0.0,"y":4.0,"support":"Fixed",  "label":"A"},
+            {"id":1,"x":4.0,"y":4.0,"support":"Free",   "label":"B"},
+            {"id":2,"x":6.0,"y":4.0,"support":"Free",   "label":"C"},
+            {"id":3,"x":4.0,"y":0.0,"support":"Pinned", "label":"E"},
+        ]
+        st.session_state.fr_members = [
+            {"id":0,"ni":0,"nj":1,"EI":2.0,"label":"AB"},
+            {"id":1,"ni":1,"nj":2,"EI":2.0,"label":"BC"},
+            {"id":2,"ni":3,"nj":1,"EI":1.0,"label":"EB"},
+        ]
+        st.session_state.fr_loads = [
+            {"member_id":0,"type":"UDL",  "mag":10.0,"pos":0.0,"end":4.0,"shape":""},
+            {"member_id":1,"type":"Point","mag":10.0,"pos":2.0,"end":0.0,"shape":""},
+            {"member_id":2,"type":"Point","mag":20.0,"pos":2.0,"end":0.0,"shape":""},
+        ]
+        st.session_state.fr_jmom   = {}
+        st.session_state.fr_sett   = {}
+        st.session_state.fr_result = None
+        st.rerun()
     nodes   = st.session_state.fr_nodes
     members = st.session_state.fr_members
     loads   = st.session_state.fr_loads
@@ -1440,31 +1474,22 @@ def frame_page():
 
         # ── PDF export ─────────────────────────────────────────
         try:
-            from pdf_export import export_frame_pdf
-            wk_lines = wk_all.split("\n")
-            # Build a results dict compatible with old PDF export signature
-            res3 = {i: moments_out.get(m["id"], (0.0, 0.0))
-                    for i, m in enumerate(members[:3])}
-            uk3  = list(unknowns.values())[:3]
-            while len(uk3) < 3: uk3.append(0.0)
-            h1 = abs(nmap[members[0]["nj"]]["y"] - nmap[members[0]["ni"]]["y"]) \
-                 if members else 4.0
-            Lbc = abs(nmap[members[1]["nj"]]["x"] - nmap[members[1]["ni"]]["x"]) \
-                  if len(members) > 1 else 6.0
-            h2 = abs(nmap[members[-1]["nj"]]["y"] - nmap[members[-1]["ni"]]["y"]) \
-                 if members else 4.0
-            pdf_f = export_frame_pdf(
-                h1, h2, Lbc,
-                members[0]["EI"] if members else 1000,
-                members[1]["EI"] if len(members) > 1 else 2000,
-                members[-1]["EI"] if members else 1000,
-                "General Frame", 0, loads, res3, uk3, wk_lines,
-                nodes[:4], members[:3])
-            st.download_button("📄  Export Frame Analysis PDF",
-                                data=pdf_f, file_name="frame_analysis.pdf",
-                                mime="application/pdf")
+            from pdf_export import export_frame_pdf_general
+            pdf_f = export_frame_pdf_general(
+                nodes, members, loads,
+                moments_out, unknowns, workings,
+                title="General Frame Analysis")
+            st.download_button(
+                "📄  Export Frame Analysis PDF",
+                data=pdf_f,
+                file_name="frame_analysis.pdf",
+                mime="application/pdf",
+                key="dl_frame_pdf")
         except Exception as e:
-            st.warning(f"PDF export: {e}")
+            import traceback
+            st.warning(f"PDF export error: {e}")
+            with st.expander("PDF error details"):
+                st.code(traceback.format_exc())
 
 def design_page():
     st.markdown("""<div class='main-header'>

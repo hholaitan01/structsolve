@@ -520,6 +520,138 @@ def export_frame_pdf(h1, h2, L, ei_AB, ei_BC, ei_CD,
     doc.build(el); buf.seek(0); return buf
 
 
+def export_frame_pdf_general(nodes, members, loads, moments_out,
+                             unknowns, workings, title="Frame Analysis"):
+    """
+    PDF export that works with ANY frame topology (v4.1).
+    No hard-coded member count or layout.
+    """
+    S = _styles(); buf = io.BytesIO(); doc = _doc(buf); el = []
+    el += [_hdr("Frame Analysis — Slope Deflection Method",
+                f"{title}  |  v4.1", S), Spacer(1, 10)]
+
+    # ── Geometry table ────────────────────────────────────────
+    el += _rule("Frame Geometry", S)
+    nmap = {n["id"]: n for n in nodes}
+    node_rows = [[n.get("label", str(n["id"])), f"({n['x']:.2f}, {n['y']:.2f}) m",
+                  n.get("support", "Free"), ""] for n in nodes]
+    el += [_tbl(["Node", "Coords (x,y)", "Support", ""],
+                node_rows, [IW*w for w in [.15, .25, .25, .35]]), Spacer(1, 4)]
+
+    mem_rows = [[m.get("label", str(m["id"])),
+                 nmap[m["ni"]].get("label","?"),
+                 nmap[m["nj"]].get("label","?"),
+                 f"{m['EI']:.1f}"] for m in members]
+    el += [_tbl(["Member", "Near node", "Far node", "EI (kNm²)"],
+                mem_rows, [IW*w for w in [.20, .20, .20, .40]]), Spacer(1, 5)]
+
+    # ── Loads table ───────────────────────────────────────────
+    el += _rule("Applied Loads", S)
+    mfmt = {m["id"]: m.get("label", str(m["id"])) for m in members}
+    lr = [[mfmt.get(ld["member_id"], str(ld["member_id"])), ld["type"],
+           f"{ld['mag']:.2f}", f"{ld.get('pos', 0):.3f} m"] for ld in loads]
+    if lr:
+        el.append(_tbl(["Member", "Type", "Magnitude", "Position"],
+                       lr, [IW*w for w in [.25, .20, .30, .25]]))
+    else:
+        el.append(Paragraph("No applied loads.", S["body"]))
+    el.append(Spacer(1, 5))
+
+    # ── Unknowns table ────────────────────────────────────────
+    el += _rule("Solved Unknowns", S)
+    uk_rows = [[k.replace("theta_", "\u03b8_").replace("delta_", "\u0394_"),
+                f"{v:.8f}",
+                "rad" if k.startswith("theta") else "m", ""]
+               for k, v in unknowns.items()]
+    if uk_rows:
+        el += [_tbl(["Unknown", "Value", "Unit", ""],
+                    uk_rows, [IW*w for w in [.20, .30, .15, .35]]), Spacer(1, 4)]
+
+    # ── Workings ──────────────────────────────────────────────
+    el += _rule("Slope-Deflection Method — Full Workings", S)
+    all_wk = "\n\n".join(workings.get(k, "") for k in
+                         ["fem", "sd_eqs", "equil", "solution", "final", "check"])
+    el += _wk_block(all_wk.split("\n"), S)
+    el.append(Spacer(1, 6))
+
+    # ── End moment table ──────────────────────────────────────
+    el += _rule("Member End Moments", S)
+    rr = []
+    for mem in members:
+        mid = mem["id"]
+        li = nmap[mem["ni"]].get("label", "?")
+        lj = nmap[mem["nj"]].get("label", "?")
+        Mij, Mji = moments_out.get(mid, (0.0, 0.0))
+        rr.append([mem.get("label", str(mid)),
+                   f"M_{li}{lj} = {Mij:+.4f} kNm",
+                   f"M_{lj}{li} = {Mji:+.4f} kNm"])
+    el += [_tbl(["Member", "Near-end Moment", "Far-end Moment"],
+                rr, [IW*w for w in [.20, .40, .40]]), Spacer(1, 8)]
+
+    # ── Frame diagram ─────────────────────────────────────────
+    el += _rule("Frame Diagram with BMD Overlay", S)
+    fig = _frame_fig_general(nodes, members, moments_out)
+    el += [_fig_img(fig, width=IW * 0.70, height=230),
+           Paragraph("BMD Overlay — end moments annotated in kNm.", S["cap"])]
+
+    doc.build(el); buf.seek(0); return buf
+
+
+def _frame_fig_general(nodes, members, results):
+    """General BMD figure for any frame topology."""
+    fig, ax = plt.subplots(figsize=(6, 5))
+    fig.patch.set_facecolor("white"); ax.set_facecolor("#F5F7FA")
+    ax.grid(True, lw=0.4, ls="--", color="#CDD2DE")
+    for sp in ax.spines.values(): sp.set_edgecolor("#CDD2DE")
+
+    nmap = {n["id"]: n for n in nodes}
+    cols = ["#2E7D6E", "#B07000", "#1A2744", "#8B2020", "#7B3F9E", "#1A6B8A"]
+
+    all_m = [abs(v) for tup in results.values() for v in tup if tup]
+    max_m = max(all_m) if all_m else 1.0
+    all_x = [n["x"] for n in nodes]; all_y = [n["y"] for n in nodes]
+    span = max(max(all_x) - min(all_x), max(all_y) - min(all_y), 1.0)
+    bmd_sc = 0.22 * span / max(max_m, 1e-6)
+
+    for idx, mem in enumerate(members):
+        c = cols[idx % len(cols)]
+        ni = nmap[mem["ni"]]; nj = nmap[mem["nj"]]
+        xi, yi = ni["x"], ni["y"]; xj, yj = nj["x"], nj["y"]
+        ax.plot([xi, xj], [yi, yj], lw=3, color=c,
+                solid_capstyle="round", label=mem.get("label", str(mem["id"])))
+
+        if mem["id"] in results:
+            Mij, Mji = results[mem["id"]]
+            Lm = np.hypot(xj - xi, yj - yi)
+            if Lm > 0:
+                dx2, dy2 = (xj - xi) / Lm, (yj - yi) / Lm
+                px2, py2 = -dy2, dx2
+                ts = np.linspace(0, 1, 40)
+                bx = [xi+t*(xj-xi)+(Mij*(1-t)+Mji*t)*bmd_sc*px2 for t in ts]
+                by = [yi+t*(yj-yi)+(Mij*(1-t)+Mji*t)*bmd_sc*py2 for t in ts]
+                ax.fill([xi]+bx+[xj, xi], [yi]+by+[yj, yi], alpha=0.12, color=c)
+                ax.plot(bx, by, lw=1.2, color=c, alpha=0.85)
+                for xx, yy, val in [(xi, yi, Mij), (xj, yj, Mji)]:
+                    ax.annotate(f"{val:+.2f}", xy=(xx, yy), xytext=(5, 5),
+                                textcoords="offset points", fontsize=7.5,
+                                color=c, fontweight="bold")
+
+    for n in nodes:
+        ax.plot(n["x"], n["y"], "o", color="#1A2744", ms=7, zorder=5)
+        ax.text(n["x"] - 0.1, n["y"] + 0.05,
+                n.get("label", str(n["id"])),
+                fontsize=8, fontweight="bold", color="#1A2744", va="bottom")
+
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (m)", fontsize=7); ax.set_ylabel("y (m)", fontsize=7)
+    ax.tick_params(labelsize=7)
+    ax.set_title("Frame — BMD Overlay", fontsize=8, fontweight="bold",
+                 color="#1A2744", pad=6)
+    ax.legend(loc="upper right", fontsize=7, framealpha=0.9)
+    fig.tight_layout()
+    return fig
+
+
 def export_rc_design_pdf(beam_system, section_type, L, bw, D, cover,
                           fcu, fy, bf, hf, gk, qk, wu,
                           flex, shear, defl, workings_lines):
