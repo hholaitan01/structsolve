@@ -823,13 +823,14 @@ def _draw_frame_general(nodes, members, nmap, results=None, loads=None):
 
     colours = [TEAL, YEL, GRN, RED, "#BB88FF", "#FF9966", "#66BBFF", "#FF66BB"]
 
-    # BMD scale
+    # Frame span (always needed for arrow/BMD scaling)
+    all_x = [n["x"] for n in nodes]
+    all_y = [n["y"] for n in nodes]
+    span = max(max(all_x) - min(all_x), max(all_y) - min(all_y), 1.0)
+    bmd_sc = 1.0
     if results:
         all_m = [abs(v) for tup in results.values() for v in tup if tup]
         max_m = max(all_m) if all_m else 1.0
-        all_x = [n["x"] for n in nodes]
-        all_y = [n["y"] for n in nodes]
-        span = max(max(all_x) - min(all_x), max(all_y) - min(all_y), 1.0)
         bmd_sc = 0.22 * span / max(max_m, 1e-6)
 
     for idx, mem in enumerate(members):
