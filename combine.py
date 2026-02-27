@@ -822,7 +822,10 @@ def _draw_frame_general(nodes, members, nmap, results=None, loads=None):
     ax.set_ylabel("y (m)", fontsize=8, color=TXT)
 
     colours = [TEAL, YEL, GRN, RED, "#BB88FF", "#FF9966", "#66BBFF", "#FF66BB"]
-
+    # geometry span (used for scaling arrows, labels, etc.)
+    all_x = [n["x"] for n in nodes]
+    all_y = [n["y"] for n in nodes]
+    span = max(max(all_x) - min(all_x), max(all_y) - min(all_y), 1.0)
     # BMD scale
     if results:
         all_m = [abs(v) for tup in results.values() for v in tup if tup]
