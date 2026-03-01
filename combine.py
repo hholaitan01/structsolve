@@ -704,9 +704,11 @@ def beam_page():
                     x2, v2, m2 = BeamSolver.get_diagram_data(
                         {"id": i, "L": L2}, m_ab, m_ba,
                         [{"member": i, **ld} for ld in span_loads[i]])
-                    m2 = -np.array(m2); v2 = np.array(v2)
+                    m2_raw = np.array(m2)  # sagging-positive from solver
+                    m2 = -m2_raw; v2 = np.array(v2)
                     all_x.extend(x2+cx); all_v.extend(v2); all_m.extend(m2); cx += L2
-                    sp_res[f"{chr(65+i)}-{chr(66+i)}"] = {"M_sag": float(max(m2)), "V_max": float(max(abs(v2)))}
+                    m_sag = float(max(m2_raw)) if max(m2_raw) > 0 else 0.0
+                    sp_res[f"{chr(65+i)}-{chr(66+i)}"] = {"M_sag": m_sag, "V_max": float(max(abs(v2)))}
                     int_act[f"{chr(65+i)}-{chr(66+i)}"] = {"M_start": m_ab, "M_end": m_ba}
                 sup_shr = {"left": abs(all_v[0]), "right": abs(all_v[-1])}
                 wk = beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_corr)
