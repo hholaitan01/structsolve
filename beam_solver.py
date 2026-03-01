@@ -77,7 +77,8 @@ class BeamSolver:
     # -------------------------------------------------
     @staticmethod
     def solve_continuous_beam(n, spans, support_types, span_loads,
-                              sway_corrections=None, prescribed_rotations=None):
+                              sway_corrections: dict | None = None,
+                              prescribed_rotations: dict | None = None):
         """
         Solve a continuous beam by the slope-deflection method.
 
@@ -220,58 +221,94 @@ class BeamSolver:
     # -------------------------------------------------
     @staticmethod
     def get_diagram_data(member, m_ab, m_ba, loads, n_points=200):
+        """
+        Compute shear force and bending moment diagrams.
 
+        Uses reaction-based equilibrium:
+          1. Compute simply-supported near-end reaction Vs from loads
+          2. True reaction V0 = Vs - (m_ab + m_ba) / L
+          3. March along beam:  V(x) = V0 - cumulative load
+                                M(x) = m_ab + V0·x - cumulative load moment
+
+        Sign convention:  sagging = positive moment,
+                          upward shear (left of cut) = positive.
+        """
         L = member["L"]
+        if L < 1e-12:
+            return np.array([0.0]), np.array([0.0]), np.array([0.0])
 
         x = np.linspace(0, L, n_points)
+
+        # ── Step 1: Simply-supported near-end reaction ──────────
+        Vs = 0.0
+        for ld in loads:
+            t = ld["type"]
+            if t == "UDL":
+                Vs += ld["mag"] * L / 2.0
+            elif t == "Point":
+                P = ld["mag"]; a = ld["pos"]
+                Vs += P * (L - a) / L
+            elif t == "UDL-P":
+                w = ld["mag"]; a = ld["pos"]; b = ld["end"]; c = b - a
+                if c > 0:
+                    Vs += w * c * (L - (a + c / 2.0)) / L
+            elif t == "UVL-P":
+                w = ld["mag"]; a = ld["pos"]; b = ld["end"]; c = b - a
+                if c > 0:
+                    R = 0.5 * w * c
+                    shape = ld.get("shape", "start_zero")
+                    xb = a + 2*c/3.0 if shape == "start_zero" else a + c/3.0
+                    Vs += R * (L - xb) / L
+
+        # ── Step 2: Adjust for end moments ──────────────────────
+        V0 = Vs - (m_ab + m_ba) / L
+
+        # ── Step 3: Build V(x) and M(x) by free-body equilibrium
         v = np.zeros(n_points)
         m = np.zeros(n_points)
 
-        # End moments (linear interpolation base)
-        m += m_ab * (1 - x/L) + m_ba * (x/L)
+        for i, xi in enumerate(x):
+            Vi = V0
+            Mi = m_ab + V0 * xi
 
-        for ld in loads:
+            for ld in loads:
+                t = ld["type"]
 
-            # FULL UDL
-            if ld["type"] == "UDL":
-                w = ld["mag"]
-                v += w * (L/2 - x)
-                m += w * x * (L - x) / 2
+                if t == "Point":
+                    P = ld["mag"]; a = ld["pos"]
+                    if xi > a:
+                        Vi -= P
+                        Mi -= P * (xi - a)
 
-            # POINT
-            elif ld["type"] == "Point":
-                P = ld["mag"]; a = ld["pos"]
-                for i, xi in enumerate(x):
-                    if xi < a:
-                        v[i] += P * (L - a) / L
-                        m[i] += P * xi * (L - a) / L
-                    else:
-                        v[i] -= P * a / L
-                        m[i] += P * a * (L - xi) / L
+                elif t == "UDL":
+                    w = ld["mag"]
+                    Vi -= w * xi
+                    Mi -= w * xi**2 / 2.0
 
-            # PARTIAL UDL
-            elif ld["type"] == "UDL-P":
-                w = ld["mag"]; a = ld["pos"]; b = ld["end"]
-                for i, xi in enumerate(x):
-                    if a <= xi <= b:
-                        v[i] += w * (b - xi)
-                        m[i] += w * (xi - a) * (b - xi) / 2
+                elif t == "UDL-P":
+                    w = ld["mag"]; a = ld["pos"]; b = ld["end"]
+                    if xi > a:
+                        c = min(xi, b) - a
+                        Vi -= w * c
+                        Mi -= w * c * (xi - a - c / 2.0)
 
-            # PARTIAL UVL
-            elif ld["type"] == "UVL-P":
-                w = ld["mag"]; a = ld["pos"]; b = ld["end"]; l = b - a
-                for i, xi in enumerate(x):
-                    if a <= xi <= b:
-                        wx = (w*(xi-a)/l if ld["shape"] == "start_zero"
-                              else w*(b-xi)/l)
-                        v[i] += wx * (b - xi)
-                        m[i] += wx * (xi - a) * (b - xi) / 2
+                elif t == "UVL-P":
+                    w = ld["mag"]; a = ld["pos"]; b = ld["end"]; cl = b - a
+                    if xi > a and cl > 0:
+                        d_loc = min(xi, b) - a
+                        shape = ld.get("shape", "start_zero")
+                        if shape == "start_zero":
+                            # linearly increasing from 0 at a to w at b
+                            w_at_d = w * d_loc / cl
+                            Vi -= 0.5 * w_at_d * d_loc
+                            Mi -= w_at_d * d_loc**2 / 6.0
+                        else:
+                            # linearly decreasing from w at a to 0 at b
+                            w_at_d = w * (cl - d_loc) / cl
+                            Vi -= (w + w_at_d) * d_loc / 2.0
+                            Mi -= d_loc**2 * (2*w + w_at_d) / 6.0
 
-        # Integrate shear -> moment
-        dx = x[1] - x[0]
-        for i in range(1, len(x)):
-            m[i] = m[i-1] + v[i-1] * dx
+            v[i] = Vi
+            m[i] = Mi
 
-        # Add end moments
-        m += np.linspace(m_ab, m_ba, len(x))
         return x, v, m
