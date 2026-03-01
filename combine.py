@@ -378,13 +378,37 @@ def beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_
         L = spans[i]["L"]; EI = spans[i]["EI"]
         k = 2*EI/L; delta = sway_corr.get(i, 0.0)
         m1, m2 = fems[i]; tA = thetas[i]; tB = thetas[i+1]
-        M_AB = m1 + k*(2*tA + tB - 3*delta/L)
-        M_BA = m2 + k*(2*tB + tA - 3*delta/L)
+        left_cant  = (i == 0         and support_types[0]       == "Free")
+        right_cant = (i == n_spans-1 and support_types[n_spans] == "Free")
         ln(f"  \u2500\u2500 Span {A}-{B} \u2500\u2500")
-        ln(f"     M_{A}{B} = {m1:+.4f} + {k:.4f}[2\u00d7{tA:.8f} + {tB:.8f} \u2212 {3*delta/L:.8f}]")
-        ln(f"          = {M_AB:.4f} kNm")
-        ln(f"     M_{B}{A} = {m2:+.4f} + {k:.4f}[2\u00d7{tB:.8f} + {tA:.8f} \u2212 {3*delta/L:.8f}]")
-        ln(f"          = {M_BA:.4f} kNm")
+        if left_cant:
+            # Cantilever: tip at A, root at B — static calculation
+            M_cant = 0.0
+            for ld in span_loads.get(i, []):
+                t = ld.get("type"); a = ld.get("pos", 0.0)
+                arm = L - a
+                if t == "UDL":   M_cant -= ld["mag"] * L**2 / 2.0
+                elif t == "Point": M_cant -= ld["mag"] * arm
+            ln(f"     Cantilever (tip at {A}, root at {B}) — static method:")
+            ln(f"     M_{A}{B} = 0.000 kNm  [free tip, zero moment]")
+            ln(f"     M_{B}{A} = \u03a3(loads \u00d7 arm) = {M_cant:.4f} kNm")
+        elif right_cant:
+            # Cantilever: root at A, tip at B — static calculation
+            M_cant = 0.0
+            for ld in span_loads.get(i, []):
+                t = ld.get("type"); a = ld.get("pos", 0.0)
+                if t == "UDL":   M_cant -= ld["mag"] * L**2 / 2.0
+                elif t == "Point": M_cant -= ld["mag"] * a
+            ln(f"     Cantilever (root at {A}, tip at {B}) — static method:")
+            ln(f"     M_{A}{B} = \u03a3(loads \u00d7 arm) = {M_cant:.4f} kNm")
+            ln(f"     M_{B}{A} = 0.000 kNm  [free tip, zero moment]")
+        else:
+            M_AB = m1 + k*(2*tA + tB - 3*delta/L)
+            M_BA = m2 + k*(2*tB + tA - 3*delta/L)
+            ln(f"     M_{A}{B} = {m1:+.4f} + {k:.4f}[2\u00d7{tA:.8f} + {tB:.8f} \u2212 {3*delta/L:.8f}]")
+            ln(f"          = {M_AB:.4f} kNm")
+            ln(f"     M_{B}{A} = {m2:+.4f} + {k:.4f}[2\u00d7{tB:.8f} + {tA:.8f} \u2212 {3*delta/L:.8f}]")
+            ln(f"          = {M_BA:.4f} kNm")
         ln()
     return W
 
@@ -514,7 +538,7 @@ def beam_page():
         sc = st.columns(n_joints)
         for i in range(n_joints):
             support_types.append(sc[i].selectbox(f"**{chr(65+i)}**",
-                ["Roller", "Fixed", "Cantilever"], key=f"s_{i}"))
+                ["Roller", "Fixed", "Pinned", "Cantilever", "Free"], key=f"s_{i}"))
 
     # Settlement / Rotation
     with st.expander("\u2699\ufe0f  Settlement & Prescribed Rotation (optional)", expanded=False):
@@ -641,11 +665,40 @@ def beam_page():
 
                 all_x, all_v, all_m = [], [], []
                 cx = 0.0; sup_mom = {}; sup_shr = {}; sp_res = {}; int_act = {}
+                # ── Helper: static cantilever moment at root ────────────────
+                def _cant_mom(span_idx, from_near):
+                    """Static moment at root of a cantilever span.
+                    from_near=True: tip is near end (left cant), moment at far end (root)
+                    from_near=False: tip is far end (right cant), moment at near end (root)"""
+                    L_c = spans[span_idx]["L"]; M = 0.0
+                    for ld in span_loads.get(span_idx, []):
+                        t = ld.get("type"); a = ld.get("pos", 0.0)
+                        arm = (L_c - a) if from_near else a   # dist from root
+                        if t == "UDL": M -= ld["mag"] * L_c**2 / 2.0
+                        elif t == "Point": M -= ld["mag"] * arm
+                        elif t == "UDL-P":
+                            w = ld["mag"]; b = ld.get("end", L_c); c = b - a
+                            if c > 0:
+                                xb_from_near = a + c/2.0
+                                arm_c = (L_c - xb_from_near) if from_near else xb_from_near
+                                M -= w * c * arm_c
+                    return M
+
                 for i in range(n_spans):
                     L2 = spans[i]["L"]; EI = spans[i]["EI"]
                     delta = sway_corr.get(i, 0.0)
-                    m_ab = fems[i][0] + (2*EI/L2)*(2*thetas[i]   + thetas[i+1] - 3*delta/L2)
-                    m_ba = fems[i][1] + (2*EI/L2)*(2*thetas[i+1] + thetas[i]   - 3*delta/L2)
+                    # Cantilever span handling
+                    left_cant_span  = (i == 0         and support_types[0]       == "Free")
+                    right_cant_span = (i == n_spans-1 and support_types[n_spans] == "Free")
+                    if left_cant_span:
+                        m_ab = 0.0                        # free tip moment = 0
+                        m_ba = _cant_mom(i, from_near=True)  # root moment (static)
+                    elif right_cant_span:
+                        m_ab = _cant_mom(i, from_near=False)  # root moment (static)
+                        m_ba = 0.0                             # free tip moment = 0
+                    else:
+                        m_ab = fems[i][0] + (2*EI/L2)*(2*thetas[i]   + thetas[i+1] - 3*delta/L2)
+                        m_ba = fems[i][1] + (2*EI/L2)*(2*thetas[i+1] + thetas[i]   - 3*delta/L2)
                     if i == 0: sup_mom["A"] = m_ab
                     sup_mom[chr(66+i)] = m_ba
                     x2, v2, m2 = BeamSolver.get_diagram_data(
@@ -982,6 +1035,35 @@ def frame_page():
     if "fr_jmom"   not in st.session_state: st.session_state.fr_jmom  = {}
     if "fr_sett"   not in st.session_state: st.session_state.fr_sett  = {}
     if "fr_result" not in st.session_state: st.session_state.fr_result = None
+
+    # ── Sanitize stale session state (migrate string ni/nj → int IDs) ─
+    # Old versions stored node labels ("A","B"…) as ni/nj; new versions use
+    # integer IDs. If stale data is detected, remap via label→id lookup.
+    _cur_nodes = st.session_state.fr_nodes
+    _lbl_to_id = {n["label"]: n["id"] for n in _cur_nodes}
+    _valid_ids  = {n["id"] for n in _cur_nodes}
+    _needs_fix  = False
+    for _m in st.session_state.fr_members:
+        if not isinstance(_m["ni"], int) or _m["ni"] not in _valid_ids:
+            _needs_fix = True; break
+        if not isinstance(_m["nj"], int) or _m["nj"] not in _valid_ids:
+            _needs_fix = True; break
+    if _needs_fix:
+        _fixed = []
+        for _m in st.session_state.fr_members:
+            _ni = _m["ni"]; _nj = _m["nj"]
+            # Coerce string labels → int IDs
+            if isinstance(_ni, str): _ni = _lbl_to_id.get(_ni, _valid_ids and min(_valid_ids))
+            if isinstance(_nj, str): _nj = _lbl_to_id.get(_nj, _valid_ids and min(_valid_ids))
+            # Coerce to int; clamp to valid range
+            try: _ni = int(_ni)
+            except (TypeError, ValueError): _ni = min(_valid_ids)
+            try: _nj = int(_nj)
+            except (TypeError, ValueError): _nj = min(_valid_ids)
+            if _ni not in _valid_ids: _ni = min(_valid_ids)
+            if _nj not in _valid_ids: _nj = max(_valid_ids)
+            _fixed.append({**_m, "ni": _ni, "nj": _nj})
+        st.session_state.fr_members = _fixed
 
     # ══════════════════════════════════════════════════════════
     # QUICK TEMPLATES
