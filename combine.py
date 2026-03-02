@@ -88,12 +88,39 @@ def _ax(ax, title="", xlabel="", ylabel=""):
     if xlabel: ax.set_xlabel(xlabel, fontsize=8)
     if ylabel: ax.set_ylabel(ylabel, fontsize=8)
 
-def _ann(ax, x, y):
-    im = int(np.argmax(y)); iv = int(np.argmin(y))
-    for i, c in [(im, GRN), (iv, RED)]:
-        ax.plot(x[i], y[i], "o", color=c, ms=5, zorder=5)
-        ax.annotate(f"{y[i]:.2f}", xy=(x[i], y[i]), xytext=(5, 5),
-                    textcoords="offset points", fontsize=7, color=c)
+def _ann_crits(ax, crit_pts, val_key, color_pos, color_neg, x_offset=0.0):
+    """Annotate all critical ordinates on an axis with smart label placement."""
+    if not crit_pts:
+        return
+    prev_y_txt = None
+    for idx, p in enumerate(crit_pts):
+        xp = p["x"] + x_offset
+        yp = p[val_key]
+        col = color_pos if yp >= 0 else color_neg
+
+        # Marker
+        ax.plot(xp, yp, "o", color=col, ms=5, zorder=6)
+
+        # Smart offset: alternate above/below to avoid overlap
+        if prev_y_txt is not None and abs(xp - prev_x) < 1.5:
+            oy = -14 if idx % 2 == 0 else 8
+        else:
+            oy = 8 if yp >= 0 else -14
+        prev_y_txt = yp
+        prev_x = xp
+
+        # Format label
+        txt = f"{yp:.2f}"
+        lbl = p.get("label", "")
+        if "V=0" in lbl:
+            txt += " \u2605"  # star for max moment
+        elif "M=0" in lbl:
+            txt += " \u25cb"  # circle for contraflexure
+
+        ax.annotate(txt, xy=(xp, yp), xytext=(3, oy),
+                    textcoords="offset points", fontsize=7, color=col,
+                    fontweight="bold", zorder=7,
+                    bbox=dict(boxstyle="round,pad=0.15", fc=BG, ec="none", alpha=0.8))
 
 
 # ─── Beam visualiser ──────────────────────────────────────────
@@ -167,24 +194,48 @@ def draw_beam_system(spans, support_types, span_loads):
     st.pyplot(fig, use_container_width=True); plt.close(fig)
 
 
-# ─── SFD/BMD ──────────────────────────────────────────────────
-def plot_sfd_bmd(x, v, m, spans):
-    fig, (a1, a2) = plt.subplots(2, 1, figsize=(13, 6.5))
+def plot_sfd_bmd(x, v, m, spans, crit_pts_all=None):
+    """Plot SFD/BMD with ordinate-driven labels at every critical point."""
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(13, 7.5))
     fig.patch.set_facecolor(BG)
-    a1.plot(x, v, lw=2, color=TEAL)
+
+    # SFD
+    a1.plot(x, v, lw=2, color=TEAL, zorder=3)
     a1.fill_between(x, v, 0, where=(np.array(v) >= 0), alpha=.15, color=GRN)
     a1.fill_between(x, v, 0, where=(np.array(v) < 0),  alpha=.15, color=RED)
-    a1.axhline(0, color=GRID, lw=1); _ann(a1, x, v)
+    a1.axhline(0, color=GRID, lw=1)
     _ax(a1, title="Shear Force Diagram", ylabel="Shear (kN)")
-    a2.plot(x, m, lw=2, color=YEL)
+
+    # BMD
+    a2.plot(x, m, lw=2, color=YEL, zorder=3)
     a2.fill_between(x, m, 0, where=(np.array(m) >= 0), alpha=.15, color=YEL)
     a2.fill_between(x, m, 0, where=(np.array(m) < 0),  alpha=.12, color=RED)
-    a2.axhline(0, color=GRID, lw=1); a2.invert_yaxis(); _ann(a2, x, m)
+    a2.axhline(0, color=GRID, lw=1); a2.invert_yaxis()
     _ax(a2, title="Bending Moment Diagram  (sagging \u2193)", xlabel="Distance (m)", ylabel="Moment (kNm)")
+
+    # Support lines
     cx = 0.0
     for sp in spans:
         cx += sp["L"]
         for ax_ in (a1, a2): ax_.axvline(cx, color=GRID, lw=1, ls=":", alpha=.7)
+
+    # Critical ordinate annotations
+    if crit_pts_all:
+        _ann_crits(a1, crit_pts_all, "V", GRN, RED)
+        _ann_crits(a2, crit_pts_all, "M", YEL, RED)
+    else:
+        # Fallback: annotate max/min only
+        im = int(np.argmax(v)); iv = int(np.argmin(v))
+        for i, c in [(im, GRN), (iv, RED)]:
+            a1.plot(x[i], v[i], "o", color=c, ms=5, zorder=5)
+            a1.annotate(f"{v[i]:.2f}", xy=(x[i], v[i]), xytext=(5, 5),
+                        textcoords="offset points", fontsize=7, color=c)
+        im = int(np.argmax(m)); iv = int(np.argmin(m))
+        for i, c in [(im, YEL), (iv, RED)]:
+            a2.plot(x[i], m[i], "o", color=c, ms=5, zorder=5)
+            a2.annotate(f"{m[i]:.2f}", xy=(x[i], m[i]), xytext=(5, 5),
+                        textcoords="offset points", fontsize=7, color=c)
+
     fig.tight_layout(pad=1.4)
     st.pyplot(fig, use_container_width=True); plt.close(fig)
 
@@ -304,6 +355,14 @@ def beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_
     SEP = "\u2550" * 60
     def h(s): W.extend([SEP, f"  {s}", SEP])
 
+    # Identify cantilever spans
+    cant_spans = set()
+    for i in range(n_spans):
+        if i == 0 and support_types[0] == "Free":
+            cant_spans.add(i)
+        if i == n_spans - 1 and support_types[n_spans] == "Free":
+            cant_spans.add(i)
+
     h("STEP 1 \u2014 FIXED-END MOMENTS")
     ln()
     ln("  Formula:  M_Fab = -wL\u00b2/12  (UDL, near end)")
@@ -314,12 +373,29 @@ def beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_
     for i in range(n_spans):
         A = chr(65+i); B = chr(66+i)
         L = spans[i]["L"]
-        m1, m2 = fems[i]
         lds = span_loads.get(i, [])
-        ln(f"  \u2500\u2500 Span {A}-{B}  (L = {L:.3f} m) \u2500\u2500")
-        if not lds:
+        is_cant = i in cant_spans
+        ln(f"  \u2500\u2500 Span {A}-{B}  (L = {L:.3f} m){' [cantilever]' if is_cant else ''} \u2500\u2500")
+        if is_cant:
+            # Cantilever: show root moment by statics, not patched FEMs
+            tip_at_near = (i == 0 and support_types[0] == "Free")
+            root_lbl = B if tip_at_near else A
+            tip_lbl  = A if tip_at_near else B
+            M_root = 0.0
+            for ld in lds:
+                t = ld.get("type"); a_pos = ld.get("pos", 0.0)
+                if t == "UDL":   M_root += ld["mag"] * L**2 / 2.0
+                elif t == "Point":
+                    arm = (L - a_pos) if tip_at_near else a_pos
+                    M_root += ld["mag"] * arm
+            ln(f"     Cantilever (root at {root_lbl}, free tip at {tip_lbl})")
+            ln(f"     Solved by statics: M_root = \u03a3(loads \u00d7 arm) = {M_root:.4f} kNm")
+            ln(f"     M_{tip_lbl}{root_lbl} = 0  [free end],  M_{root_lbl}{tip_lbl} = {-M_root:.4f} kNm")
+        elif not lds:
             ln(f"     No load  \u2192  M_F{A}{B} = 0.000 kNm,  M_F{B}{A} = 0.000 kNm")
         else:
+            # Recompute standard FEMs from formulas (not from patched fems array)
+            std_m1, std_m2 = 0.0, 0.0
             for ld in lds:
                 t = ld["type"]
                 if t == "UDL":
@@ -327,16 +403,22 @@ def beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_
                     ln(f"     UDL:  w = {w:.2f} kN/m, L = {L:.3f} m")
                     ln(f"     M_F{A}{B} = -wL\u00b2/12 = -{w:.2f}\u00d7{L:.3f}\u00b2/12 = {-w*L**2/12:.4f} kNm")
                     ln(f"     M_F{B}{A} = +wL\u00b2/12 =  {w*L**2/12:.4f} kNm")
+                    std_m1 += -w*L**2/12; std_m2 += w*L**2/12
                 elif t == "Point":
                     P = ld["mag"]; a = ld["pos"]; b = L-a
                     ln(f"     Point load: P = {P:.2f} kN, a = {a:.3f} m, b = {b:.3f} m")
                     ln(f"     M_F{A}{B} = -Pab\u00b2/L\u00b2 = {-P*a*b**2/L**2:.4f} kNm")
                     ln(f"     M_F{B}{A} = +Pa\u00b2b/L\u00b2 = {P*a**2*b/L**2:.4f} kNm")
+                    std_m1 += -P*a*b**2/L**2; std_m2 += P*a**2*b/L**2
                 elif t == "UDL-P":
                     ln(f"     Partial UDL: w={ld['mag']:.2f} kN/m, {ld['pos']:.3f}\u2192{ld['end']:.3f} m")
+                    a1, b1 = BeamSolver.beam_fixed_end_moments(L, ld)
+                    std_m1 += a1; std_m2 += b1
                 elif t == "UVL-P":
                     ln(f"     UVL: w_max={ld['mag']:.2f} kN/m, shape={ld.get('shape','')}")
-            ln(f"     \u2234 M_F{A}{B} = {m1:.4f} kNm   M_F{B}{A} = {m2:.4f} kNm")
+                    a1, b1 = BeamSolver.beam_fixed_end_moments(L, ld)
+                    std_m1 += a1; std_m2 += b1
+            ln(f"     \u2234 M_F{A}{B} = {std_m1:.4f} kNm   M_F{B}{A} = {std_m2:.4f} kNm")
         ln()
 
     h("STEP 2 \u2014 SLOPE-DEFLECTION EQUATIONS")
@@ -345,21 +427,35 @@ def beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_
     ln()
     for i in range(n_spans):
         A = chr(65+i); B = chr(66+i)
+        if i in cant_spans:
+            ln(f"  \u2500\u2500 Span {A}-{B}:  cantilever \u2192 solved by statics (see Step 5) \u2500\u2500")
+            ln()
+            continue
         L = spans[i]["L"]; EI = spans[i]["EI"]
         k = 2*EI/L; delta = sway_corr.get(i, 0.0)
-        m1, m2 = fems[i]
+        # Use standard FEMs recomputed from loads, not patched fems
+        std_m1, std_m2 = 0.0, 0.0
+        for ld in span_loads.get(i, []):
+            a1, b1 = BeamSolver.beam_fixed_end_moments(L, ld)
+            std_m1 += a1; std_m2 += b1
         ln(f"  \u2500\u2500 Span {A}-{B}:  L={L:.3f}m,  EI={EI:.4f},  2EI/L = {k:.4f} \u2500\u2500")
         if abs(delta) > 1e-9:
             ln(f"     Chord shortening \u0394 = {delta:.6f} m  \u2192  3\u0394/L = {3*delta/L:.8f}")
-        ln(f"     M_{A}{B} = {m1:+.4f} + {k:.4f}[2\u03b8_{A} + \u03b8_{B} \u2212 {3*delta/L:.6f}]")
-        ln(f"     M_{B}{A} = {m2:+.4f} + {k:.4f}[2\u03b8_{B} + \u03b8_{A} \u2212 {3*delta/L:.6f}]")
+        ln(f"     M_{A}{B} = {std_m1:+.4f} + {k:.4f}[2\u03b8_{A} + \u03b8_{B} \u2212 {3*delta/L:.6f}]")
+        ln(f"     M_{B}{A} = {std_m2:+.4f} + {k:.4f}[2\u03b8_{B} + \u03b8_{A} \u2212 {3*delta/L:.6f}]")
         ln()
 
     h("STEP 3 \u2014 BOUNDARY CONDITIONS & EQUILIBRIUM")
     ln()
     for i in range(n_spans+1):
-        bc = "0 (Fixed/pinned)" if support_types[i] in ("Fixed","Cantilever") else "free"
-        ln(f"     Joint {chr(65+i)} ({support_types[i]}):  \u03b8_{chr(65+i)} = {bc}")
+        stype = support_types[i]
+        if stype in ("Fixed", "Cantilever"):
+            bc = "0 (fixed)"
+        elif stype == "Free":
+            bc = "free (cantilever tip \u2014 not an SDE unknown)"
+        else:
+            bc = "unknown (free to rotate)"
+        ln(f"     Joint {chr(65+i)} ({stype}):  \u03b8_{chr(65+i)} = {bc}")
     ln()
     ln("  Equilibrium: \u03a3M = 0 at each free joint \u2192 solve simultaneous equations")
     ln()
@@ -663,7 +759,7 @@ def beam_page():
                     n_joints, spans, support_types, span_loads,
                     sway_corrections=sway_corr, prescribed_rotations=prescribed)
 
-                all_x, all_v, all_m = [], [], []
+                all_x, all_v, all_m, all_cpts = [], [], [], []
                 cx = 0.0; sup_mom = {}; sup_shr = {}; sp_res = {}; int_act = {}
                 # ── Helper: static cantilever moment at root ────────────────
                 def _cant_mom(span_idx, from_near):
@@ -706,6 +802,15 @@ def beam_page():
                         [{"member": i, **ld} for ld in span_loads[i]])
                     m2_raw = np.array(m2)  # sagging-positive from solver
                     m2 = -m2_raw; v2 = np.array(v2)
+                    # Critical ordinates for labelling
+                    cpts = BeamSolver.get_critical_points(
+                        {"id": i, "L": L2}, m_ab, m_ba,
+                        [{"member": i, **ld} for ld in span_loads[i]])
+                    # Offset to global x and negate M for display convention
+                    for p in cpts:
+                        p["x"] += cx
+                        p["M"] = -p["M"]  # hogging-positive for display
+                    all_cpts.extend(cpts)
                     all_x.extend(x2+cx); all_v.extend(v2); all_m.extend(m2); cx += L2
                     m_sag = float(max(m2_raw)) if max(m2_raw) > 0 else 0.0
                     sp_res[f"{chr(65+i)}-{chr(66+i)}"] = {"M_sag": m_sag, "V_max": float(max(abs(v2)))}
@@ -722,6 +827,7 @@ def beam_page():
                     "beam_sway_corr": sway_corr, "beam_settlements": dict(settlements),
                     "beam_rotations": dict(rotations), "beam_span_loads": dict(span_loads),
                     "beam_support_types": list(support_types),
+                    "beam_crit_pts": all_cpts,
                 })
             except Exception as e:
                 import traceback; st.error(f"Analysis error: {e}")
@@ -748,7 +854,25 @@ def beam_page():
                   f"<div class='metric-box'><div class='val yel'>{max_shr:.2f}</div>"
                   f"<div class='lbl'>Max Shear (kN)</div></div>")
         st.markdown(f"<div class='metric-grid'>{cards}</div>", unsafe_allow_html=True)
-        plot_sfd_bmd(x, v, m, spans_c)
+        crit_pts = st.session_state.get("beam_crit_pts", None)
+        plot_sfd_bmd(x, v, m, spans_c, crit_pts_all=crit_pts)
+
+        # Critical ordinates table
+        if crit_pts:
+            st.markdown("<div class='section-label'>Critical Ordinates</div>", unsafe_allow_html=True)
+            ord_rows = []
+            for p in crit_pts:
+                lbl_map = {"start": "Support", "end": "Support", "point_load": "Point load",
+                           "load_boundary": "Load boundary", "V=0 (M_max)": "V=0 (M max)",
+                           "M=0 (contra)": "Contraflexure"}
+                ord_rows.append({
+                    "x (m)": round(p["x"], 4),
+                    "Point": lbl_map.get(p["label"], p["label"]),
+                    "V (kN)": round(p["V"], 2),
+                    "M (kNm)": round(p["M"], 2),
+                })
+            ord_df = pd.DataFrame(ord_rows)
+            st.dataframe(ord_df, use_container_width=True, hide_index=True)
 
         # Support actions table
         st.markdown("<div class='section-label'>Support Actions</div>", unsafe_allow_html=True)
