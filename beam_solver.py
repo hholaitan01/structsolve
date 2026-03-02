@@ -11,31 +11,59 @@ class BeamSolver:
         """
         Returns (M_ab, M_ba) for a FIXED-FIXED span.
         Sign convention: Mba > 0 for a standard UDL (hogging-positive at far end).
+
+        Uses exact integration formulas from standard FEM tables:
+          FEM_AB = -(1/L²) ∫ w(x)·x·(L-x)² dx
+          FEM_BA = +(1/L²) ∫ w(x)·x²·(L-x) dx
         """
         t = load["type"]
 
-        # POINT LOAD
+        # POINT LOAD  — Pab²/L², Pa²b/L²
         if t == "Point":
             P = load["mag"]; a = load["pos"]; b = L - a
             return -P*a*b**2/L**2,  P*a**2*b/L**2
 
-        # FULL UDL
+        # FULL UDL  — wL²/12
         if t == "UDL":
             w = load["mag"]
             return -w*L**2/12,  w*L**2/12
 
-        # PARTIAL UDL
+        # PARTIAL UDL (exact integration)
+        #   ∫_a^b x(L-x)² dx = [L²x²/2 - 2Lx³/3 + x⁴/4]_a^b
+        #   ∫_a^b x²(L-x) dx = [Lx³/3 - x⁴/4]_a^b
         if t == "UDL-P":
-            w = load["mag"]; a = load["pos"]; b = load["end"]; l = b - a
-            R = w*l; x = a + l/2
-            return -R*(L-x)**2*x/L**2,  R*x**2*(L-x)/L**2
+            w = load["mag"]; a = load["pos"]; b = load["end"]
+            F1 = lambda x: L**2*x**2/2 - 2*L*x**3/3 + x**4/4
+            F2 = lambda x: L*x**3/3 - x**4/4
+            return -w/L**2 * (F1(b) - F1(a)),  w/L**2 * (F2(b) - F2(a))
 
-        # PARTIAL UVL (TRIANGULAR)
+        # PARTIAL UVL — TRIANGULAR (exact integration)
         if t == "UVL-P":
-            w = load["mag"]; a = load["pos"]; b = load["end"]; l = b - a
-            R = 0.5*w*l
-            x = a + 2*l/3 if load["shape"] == "start_zero" else a + l/3
-            return -R*(L-x)**2*x/L**2,  R*x**2*(L-x)/L**2
+            w = load["mag"]; a = load["pos"]; b = load["end"]; c = b - a
+            if c <= 0:
+                return 0.0, 0.0
+            shape = load.get("shape", "start_zero")
+            if shape == "start_zero":
+                # w(x) = w·(x-a)/c  from a to b  (0 at a, w at b)
+                # ∫_a^b (x-a)·x·(L-x)² dx  antiderivative:
+                G1 = lambda x: (L**2*x**3/3 - L*x**4/2 + x**5/5
+                                - a*L**2*x**2/2 + 2*a*L*x**3/3 - a*x**4/4)
+                # ∫_a^b (x-a)·x²·(L-x) dx  antiderivative:
+                G2 = lambda x: (L*x**4/4 - x**5/5 - a*L*x**3/3 + a*x**4/4)
+            else:
+                # w(x) = w·(b-x)/c  from a to b  (w at a, 0 at b)
+                # ∫_a^b (b-x)·x·(L-x)² dx  antiderivative:
+                G1 = lambda x: (b*L**2*x**2/2 - 2*b*L*x**3/3 + b*x**4/4
+                                - L**2*x**3/3 + L*x**4/2 - x**5/5)
+                # ∫_a^b (b-x)·x²·(L-x) dx  antiderivative:
+                G2 = lambda x: (b*L*x**3/3 - b*x**4/4 - L*x**4/4 + x**5/5)
+            return (-w/(c*L**2) * (G1(b) - G1(a)),
+                     w/(c*L**2) * (G2(b) - G2(a)))
+
+        # APPLIED MOMENT  — Mb(2a-b)/L², Ma(2b-a)/L²
+        if t == "Moment":
+            M = load["mag"]; a = load["pos"]; b = L - a
+            return -M*b*(2*a - b)/L**2,  M*a*(2*b - a)/L**2
 
         return 0.0, 0.0
 
