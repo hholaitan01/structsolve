@@ -23,6 +23,7 @@ from pdf_export import (
     export_beam_analysis_pdf, export_beam_design_pdf,
     export_frame_pdf, export_rc_design_pdf,
 )
+from homepage import homepage
 
 st.set_page_config(page_title="StructSolve | BS 8110", page_icon="🏗️",
                    layout="wide", initial_sidebar_state="expanded")
@@ -578,8 +579,12 @@ def _sidebar():
             <div style='font-family:Syne,sans-serif;font-weight:800;color:#E8EAF0;font-size:1.15rem'>StructSolve</div>
             <div style='color:#8B92A8;font-size:.68rem;margin-top:2px'>BS 8110-1:1997</div>
         </div>""", unsafe_allow_html=True)
-        module = st.radio("SELECT MODULE",
-            ["🔩 Beam Analysis", "🏛️ Frame Analysis", "🧱 RC Design"])
+        _options = ["🏠 Home", "🔩 Beam Analysis", "🏛️ Frame Analysis", "🧱 RC Design"]
+        # Check if homepage requested a navigation
+        _target = st.session_state.pop("_nav_target", None)
+        _idx = _options.index(_target) if _target in _options else 0
+        module = st.radio("SELECT MODULE", _options, index=_idx,
+            key="nav_module")
         st.markdown("---")
         st.markdown("""<div style='color:#8B92A8;font-size:.7rem;line-height:1.9'>
         <b style='color:#4ECDC4'>METHODS</b><br>
@@ -1836,7 +1841,8 @@ def design_page():
 # ══════════════════════════════════════════════════════════════
 def main():
     module = _sidebar()
-    if   "Beam"  in module: beam_page()
+    if   "Home"  in module: homepage()
+    elif "Beam"  in module: beam_page()
     elif "Frame" in module: frame_page()
     elif "RC"    in module: design_page()
 
