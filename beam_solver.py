@@ -160,28 +160,43 @@ class BeamSolver:
             delta_left  = sway_corrections.get(i - 1, 0.0) if i > 0     else 0.0
             delta_right = sway_corrections.get(i,     0.0) if i < n - 1 else 0.0
 
-            # Left span (i-1): skip if it is a cantilever span
-            if i > 0 and (i - 1) not in cant:
+            # Left span (i-1): use modified stiffness if it is a cantilever
+            if i > 0:
                 L, ei = spans[i-1]['L'], spans[i-1]['EI']
-                A[i, i-1] += 2*ei/L
-                A[i, i]   += 4*ei/L
-                B[i] -= fems[i-1][1]
-                B[i] -= (2*ei/L) * (-3*delta_left/L)   # settlement correction
+                if (i - 1) not in cant:
+                    # Normal span: near-end stiffness on i
+                    A[i, i-1] += 2*ei/L
+                    A[i, i]   += 4*ei/L
+                    B[i] -= fems[i-1][1]
+                    B[i] -= (2*ei/L) * (-3*delta_left/L)
+                else:
+                    # Left span is a cantilever (tip at i-1, root at i):
+                    # i is the root → use modified stiffness 3EI/L
+                    # Modified SDE: M_root = (3EI/L)*θ_root + FEM_far - FEM_tip/2 - cant
+                    # (far = near-end of root = fems[i-1][1], tip = fems[i-1][0])
+                    A[i, i] += 3*ei/L
+                    fem_mod = fems[i-1][1] - fems[i-1][0]/2
+                    B[i] -= fem_mod
+                    B[i] += cant[i-1]  # static moment opposes FEM sign
 
-            # Right span (i): skip if it is a cantilever span
-            if i < n - 1 and i not in cant:
+            # Right span (i): use modified stiffness if it is a cantilever
+            if i < n - 1:
                 L, ei = spans[i]['L'], spans[i]['EI']
-                A[i, i]   += 4*ei/L
-                A[i, i+1] += 2*ei/L
-                B[i] -= fems[i][0]
-                B[i] -= (2*ei/L) * (-3*delta_right/L)  # settlement correction
-
-            # External moment from an adjacent cantilever overhang.
-            # Span i (to the right of node i) is a cantilever:
-            #   Root moment M_root acts on node i.
-            #   Equilibrium: ΣM_SDE + M_root = 0  =>  B[i] -= M_root
-            if i in cant:
-                B[i] -= cant[i]
+                if i not in cant:
+                    # Normal span: near-end stiffness on i
+                    A[i, i]   += 4*ei/L
+                    A[i, i+1] += 2*ei/L
+                    B[i] -= fems[i][0]
+                    B[i] -= (2*ei/L) * (-3*delta_right/L)
+                else:
+                    # Right span is a cantilever (root at i, tip at i+1):
+                    # i is the root → use modified stiffness 3EI/L
+                    # Modified SDE: M_near = (3EI/L)*θ_root + FEM_near - FEM_far/2 - cant
+                    # (near = fems[i][0], far/tip = fems[i][1])
+                    A[i, i] += 3*ei/L
+                    fem_mod = fems[i][0] - fems[i][1]/2
+                    B[i] -= fem_mod
+                    B[i] += cant[i]  # static moment opposes FEM sign
 
         # Guard: ensure no zero rows
         for i in range(n):
@@ -312,3 +327,217 @@ class BeamSolver:
             m[i] = Mi
 
         return x, v, m
+
+    # ------------------------------------------------------------------ #
+    #  CRITICAL ORDINATE HELPERS                                          #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _eval_vm(x_pt, V0, m_ab, loads):
+        """Evaluate V and M at a single point x_pt using equilibrium."""
+        Vi = V0
+        Mi = m_ab + V0 * x_pt
+        for ld in loads:
+            t = ld["type"]
+            if t == "Point":
+                P = ld["mag"]; a = ld["pos"]
+                if x_pt > a + 1e-12:
+                    Vi -= P
+                    Mi -= P * (x_pt - a)
+            elif t == "UDL":
+                w = ld["mag"]
+                Vi -= w * x_pt
+                Mi -= w * x_pt**2 / 2.0
+            elif t == "UDL-P":
+                w = ld["mag"]; a = ld["pos"]; b = ld["end"]
+                if x_pt > a:
+                    c = min(x_pt, b) - a
+                    Vi -= w * c
+                    Mi -= w * c * (x_pt - a - c / 2.0)
+            elif t == "UVL-P":
+                w = ld["mag"]; a = ld["pos"]; b = ld["end"]; cl = b - a
+                if x_pt > a and cl > 0:
+                    d_loc = min(x_pt, b) - a
+                    shape = ld.get("shape", "start_zero")
+                    if shape == "start_zero":
+                        w_at_d = w * d_loc / cl
+                        Vi -= 0.5 * w_at_d * d_loc
+                        Mi -= w_at_d * d_loc**2 / 6.0
+                    else:
+                        w_at_d = w * (cl - d_loc) / cl
+                        Vi -= (w + w_at_d) * d_loc / 2.0
+                        Mi -= d_loc**2 * (2*w + w_at_d) / 6.0
+        return Vi, Mi
+
+    @staticmethod
+    def get_critical_points(member, m_ab, m_ba, loads):
+        """
+        Compute critical ordinates for SFD/BMD labelling.
+
+        Returns a list of dicts:
+          [{"x": float, "V": float, "M": float, "label": str}, ...]
+
+        Critical points include:
+          - Span start/end (supports)
+          - Point load positions (left & right of discontinuity)
+          - Zero-shear locations (where moment is max/min)
+          - Contraflexure points (M = 0 between known ordinates)
+        """
+        L = member["L"]
+        if L < 1e-12:
+            return [{"x": 0.0, "V": 0.0, "M": 0.0, "label": "start"}]
+
+        # ── Step 1: Compute V0 (same as get_diagram_data) ──
+        Vs = 0.0
+        for ld in loads:
+            t = ld["type"]
+            if t == "UDL":
+                Vs += ld["mag"] * L / 2.0
+            elif t == "Point":
+                P = ld["mag"]; a = ld["pos"]
+                Vs += P * (L - a) / L
+            elif t == "UDL-P":
+                w = ld["mag"]; a = ld["pos"]; b = ld["end"]; c = b - a
+                if c > 0:
+                    Vs += w * c * (L - (a + c / 2.0)) / L
+            elif t == "UVL-P":
+                w = ld["mag"]; a = ld["pos"]; b = ld["end"]; c = b - a
+                if c > 0:
+                    R = 0.5 * w * c
+                    shape = ld.get("shape", "start_zero")
+                    xb = a + 2*c/3.0 if shape == "start_zero" else a + c/3.0
+                    Vs += R * (L - xb) / L
+        V0 = Vs - (m_ab + m_ba) / L
+
+        ev = BeamSolver._eval_vm
+
+        # ── Collect candidate x-positions ──
+        xs = {0.0, L}  # always include start and end
+        # Point load positions (just before and after)
+        EPS = 1e-9
+        for ld in loads:
+            if ld["type"] == "Point":
+                a = ld["pos"]
+                if 0 < a < L:
+                    xs.add(a - EPS)
+                    xs.add(a)
+                    xs.add(a + EPS)
+            elif ld["type"] in ("UDL-P", "UVL-P"):
+                a = ld["pos"]; b = ld["end"]
+                if a > 0:   xs.add(a)
+                if b < L:   xs.add(b)
+
+        # ── Evaluate V, M at all candidate points ──
+        raw_pts = sorted(xs)
+        evaluated = []
+        for xp in raw_pts:
+            Vi, Mi = ev(xp, V0, m_ab, loads)
+            evaluated.append({"x": xp, "V": Vi, "M": Mi})
+
+        # ── Find zero-shear points (V=0) between consecutive evaluated points ──
+        zero_shear = []
+        for j in range(len(evaluated) - 1):
+            p1, p2 = evaluated[j], evaluated[j+1]
+            v1, v2 = p1["V"], p2["V"]
+            x1, x2 = p1["x"], p2["x"]
+            if abs(x2 - x1) < 1e-12:
+                continue
+            # Check for sign change or zero crossing
+            if v1 * v2 < 0:
+                # Find zero crossing — depends on loading type
+                # Under UDL: V(x) is linear → V(x₁) + slope*(x - x₁) = 0
+                # Check if there's a UDL active in this region
+                w_net = 0.0
+                for ld in loads:
+                    if ld["type"] == "UDL":
+                        w_net += ld["mag"]
+                    elif ld["type"] == "UDL-P":
+                        w = ld["mag"]; a = ld["pos"]; b = ld["end"]
+                        if a <= x1 and x2 <= b:
+                            w_net += w
+                    elif ld["type"] == "UVL-P":
+                        # Approximate with average
+                        w = ld["mag"]; a = ld["pos"]; b = ld["end"]; cl = b - a
+                        if a <= x1 and x2 <= b and cl > 0:
+                            shape = ld.get("shape", "start_zero")
+                            xm = (x1 + x2) / 2
+                            d = xm - a
+                            if shape == "start_zero":
+                                w_net += w * d / cl
+                            else:
+                                w_net += w * (cl - d) / cl
+
+                if abs(w_net) > 1e-12:
+                    # Linear V: V(x) = v1 - w_net*(x - x1)
+                    # V=0 → x = x1 + v1/w_net
+                    x_zero = x1 + v1 / w_net
+                    if x1 < x_zero < x2:
+                        Vz, Mz = ev(x_zero, V0, m_ab, loads)
+                        zero_shear.append({"x": x_zero, "V": Vz, "M": Mz})
+                else:
+                    # Linear interpolation
+                    frac = abs(v1) / (abs(v1) + abs(v2))
+                    x_zero = x1 + frac * (x2 - x1)
+                    Vz, Mz = ev(x_zero, V0, m_ab, loads)
+                    zero_shear.append({"x": x_zero, "V": Vz, "M": Mz})
+
+        # ── Find contraflexure points (M=0) ──
+        all_for_contra = sorted(evaluated + zero_shear, key=lambda p: p["x"])
+        contraflexure = []
+        for j in range(len(all_for_contra) - 1):
+            p1, p2 = all_for_contra[j], all_for_contra[j+1]
+            m1_v, m2_v = p1["M"], p2["M"]
+            x1, x2 = p1["x"], p2["x"]
+            if abs(x2 - x1) < 1e-12:
+                continue
+            if m1_v * m2_v < 0:
+                # Bisection to find M=0 (works for parabolic and linear)
+                xa, xb = x1, x2
+                for _ in range(50):
+                    xm = (xa + xb) / 2.0
+                    _, Mm = ev(xm, V0, m_ab, loads)
+                    if abs(Mm) < 1e-10:
+                        break
+                    if Mm * m1_v > 0:
+                        xa = xm
+                    else:
+                        xb = xm
+                xm = (xa + xb) / 2.0
+                Vcf, Mcf = ev(xm, V0, m_ab, loads)
+                contraflexure.append({"x": xm, "V": Vcf, "M": Mcf})
+
+        # ── Merge and label ──
+        result = []
+        for p in evaluated:
+            lbl = ""
+            if abs(p["x"]) < 1e-9:
+                lbl = "start"
+            elif abs(p["x"] - L) < 1e-9:
+                lbl = "end"
+            else:
+                # Check if it's a point load location
+                for ld in loads:
+                    if ld["type"] == "Point" and abs(p["x"] - ld["pos"]) < 1e-6:
+                        lbl = "point_load"
+                        break
+                if not lbl:
+                    lbl = "load_boundary"
+            result.append({**p, "label": lbl})
+
+        for p in zero_shear:
+            result.append({**p, "label": "V=0 (M_max)"})
+        for p in contraflexure:
+            result.append({**p, "label": "M=0 (contra)"})
+
+        # Sort and deduplicate (merge points within tolerance)
+        result.sort(key=lambda p: p["x"])
+        merged = []
+        for p in result:
+            if merged and abs(p["x"] - merged[-1]["x"]) < 1e-6:
+                # Keep the one with a more informative label
+                if "V=0" in p["label"] or "M=0" in p["label"]:
+                    merged[-1] = p
+                continue
+            merged.append(p)
+
+        return merged

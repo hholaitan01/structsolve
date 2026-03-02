@@ -149,8 +149,8 @@ def _wk_block(lines, S):
 # ══════════════════════════════════════════════════════════════
 # MATPLOTLIB FIGURE BUILDERS
 # ══════════════════════════════════════════════════════════════
-def _sfd_bmd_fig(x, v, m, span_Ls):
-    fig, (a1, a2) = plt.subplots(2, 1, figsize=(8, 5))
+def _sfd_bmd_fig(x, v, m, span_Ls, crit_pts_all=None):
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(8, 5.5))
     fig.patch.set_facecolor("white")
     for ax in (a1, a2):
         ax.set_facecolor("#F5F7FA")
@@ -160,17 +160,17 @@ def _sfd_bmd_fig(x, v, m, span_Ls):
 
     xv = np.array(x); vv = np.array(v); mv = np.array(m)
 
-    a1.plot(xv, vv, lw=1.8, color="#2E7D6E")
+    a1.plot(xv, vv, lw=1.8, color="#2E7D6E", zorder=3)
     a1.fill_between(xv, vv, 0, where=vv >= 0, alpha=.15, color="#2E7D6E")
-    a1.fill_between(xv, vv, 0, where=vv <  0, alpha=.15, color="#8B2020")
+    a1.fill_between(xv, vv, 0, where=vv < 0, alpha=.15, color="#8B2020")
     a1.axhline(0, color="#888", lw=.8)
     a1.set_ylabel("Shear (kN)", fontsize=7)
     a1.set_title("Shear Force Diagram", fontsize=8, fontweight="bold",
                  color="#1A2744", pad=5)
 
-    a2.plot(xv, mv, lw=1.8, color="#B07000")
+    a2.plot(xv, mv, lw=1.8, color="#B07000", zorder=3)
     a2.fill_between(xv, mv, 0, where=mv >= 0, alpha=.15, color="#B07000")
-    a2.fill_between(xv, mv, 0, where=mv <  0, alpha=.12, color="#8B2020")
+    a2.fill_between(xv, mv, 0, where=mv < 0, alpha=.12, color="#8B2020")
     a2.axhline(0, color="#888", lw=.8)
     a2.invert_yaxis()
     a2.set_ylabel("Moment (kNm)", fontsize=7)
@@ -184,12 +184,36 @@ def _sfd_bmd_fig(x, v, m, span_Ls):
         for ax in (a1, a2):
             ax.axvline(cx, color="#CDD2DE", lw=0.8, ls=":")
 
-    for ax, y in [(a1, vv), (a2, mv)]:
-        im = int(np.argmax(y)); iv = int(np.argmin(y))
-        ax.annotate(f"{y[im]:.2f}", xy=(xv[im], y[im]), xytext=(3, 3),
-                    textcoords="offset points", fontsize=6, color="#2E7D6E", fontweight="bold")
-        ax.annotate(f"{y[iv]:.2f}", xy=(xv[iv], y[iv]), xytext=(3, -9),
-                    textcoords="offset points", fontsize=6, color="#8B2020", fontweight="bold")
+    if crit_pts_all:
+        # Ordinate-driven annotations
+        for p in crit_pts_all:
+            xp, vp, mp = p["x"], p["V"], p["M"]
+            lbl = p.get("label", "")
+            suffix = ""
+            if "V=0" in lbl: suffix = " \u2605"
+            elif "M=0" in lbl: suffix = " \u25cb"
+            # SFD
+            cv = "#2E7D6E" if vp >= 0 else "#8B2020"
+            a1.plot(xp, vp, "o", color=cv, ms=3.5, zorder=6)
+            a1.annotate(f"{vp:.2f}{suffix}", xy=(xp, vp), xytext=(2, 5),
+                        textcoords="offset points", fontsize=5, color=cv,
+                        fontweight="bold", zorder=7,
+                        bbox=dict(boxstyle="round,pad=0.1", fc="white", ec="none", alpha=0.85))
+            # BMD
+            cm = "#B07000" if mp >= 0 else "#8B2020"
+            a2.plot(xp, mp, "o", color=cm, ms=3.5, zorder=6)
+            a2.annotate(f"{mp:.2f}{suffix}", xy=(xp, mp), xytext=(2, 5),
+                        textcoords="offset points", fontsize=5, color=cm,
+                        fontweight="bold", zorder=7,
+                        bbox=dict(boxstyle="round,pad=0.1", fc="white", ec="none", alpha=0.85))
+    else:
+        # Fallback: annotate max/min only
+        for ax, y in [(a1, vv), (a2, mv)]:
+            im = int(np.argmax(y)); iv = int(np.argmin(y))
+            ax.annotate(f"{y[im]:.2f}", xy=(xv[im], y[im]), xytext=(3, 3),
+                        textcoords="offset points", fontsize=6, color="#2E7D6E", fontweight="bold")
+            ax.annotate(f"{y[iv]:.2f}", xy=(xv[iv], y[iv]), xytext=(3, -9),
+                        textcoords="offset points", fontsize=6, color="#8B2020", fontweight="bold")
 
     fig.tight_layout(pad=1.2)
     return fig
