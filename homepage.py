@@ -350,11 +350,15 @@ def homepage():
     # ══════════════════════════════════════════════════════════════════
     # FOOTER
     # ══════════════════════════════════════════════════════════════════
+    _, fc, _ = st.columns([1.5, 1, 1.5])
+    with fc:
+        if st.button("📖  View Documentation", use_container_width=True):
+            st.session_state["_nav_target"] = "📖 Documentation"
+            st.rerun()
+
     st.markdown("""
     <div class="home-footer">
         <a href="https://github.com/hholaitan01/structsolve" target="_blank">GitHub</a>
-        &nbsp;·&nbsp;
-        <a href="https://github.com/hholaitan01/structsolve#readme" target="_blank">Documentation</a>
         &nbsp;·&nbsp;
         <a href="https://github.com/hholaitan01/structsolve/issues" target="_blank">Report an Issue</a>
         <br>

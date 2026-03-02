@@ -24,6 +24,7 @@ from pdf_export import (
     export_frame_pdf, export_rc_design_pdf,
 )
 from homepage import homepage
+from docs_page import docs_page
 
 st.set_page_config(page_title="StructSolve | BS 8110", page_icon="🏗️",
                    layout="wide", initial_sidebar_state="expanded")
@@ -579,7 +580,7 @@ def _sidebar():
             <div style='font-family:Syne,sans-serif;font-weight:800;color:#E8EAF0;font-size:1.15rem'>StructSolve</div>
             <div style='color:#8B92A8;font-size:.68rem;margin-top:2px'>BS 8110-1:1997</div>
         </div>""", unsafe_allow_html=True)
-        _options = ["🏠 Home", "🔩 Beam Analysis", "🏛️ Frame Analysis", "🧱 RC Design"]
+        _options = ["🏠 Home", "🔩 Beam Analysis", "🏛️ Frame Analysis", "🧱 RC Design", "📖 Documentation"]
         # Check if homepage requested a navigation
         _target = st.session_state.pop("_nav_target", None)
         _idx = _options.index(_target) if _target in _options else 0
@@ -1845,6 +1846,7 @@ def main():
     elif "Beam"  in module: beam_page()
     elif "Frame" in module: frame_page()
     elif "RC"    in module: design_page()
+    elif "Doc"   in module: docs_page()
 
 if __name__ == "__main__":
     main()
