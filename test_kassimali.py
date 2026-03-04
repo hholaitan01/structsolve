@@ -14,8 +14,12 @@ NOTE: The beam_solver now patches fems/thetas for cantilever spans so that
 the standard formula automatically gives the correct static results.
 """
 
-import sys, os, textwrap
+import sys, os, textwrap, io
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Ensure stdout can handle Unicode on Windows (cp1252 can't print θ, Σ, etc.)
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 import numpy as np
 from beam_solver import BeamSolver
@@ -605,15 +609,15 @@ if __name__ == "__main__":
     print(f"  {'Test':<10} {'Check':<32} {'Expected':>10} {'Computed':>10} {'':>8}")
     print(f"  {'-'*10} {'-'*32} {'-'*10} {'-'*10} {'-'*8}")
     for name, label, exp, comp, ok in results_log:
-        tag = "PASS ✅" if ok else "FAIL ❌"
+        tag = "PASS" if ok else "FAIL"
         print(f"  {name:<10} {label:<32} {exp:>10.2f} {comp:>10.2f} {tag:>8}")
 
-    print(f"\n  Total: {total}  |  Passed: {passed} ✅  |  Failed: {failed} ❌")
+    print(f"\n  Total: {total}  |  Passed: {passed}  |  Failed: {failed}")
     print(f"  Pass rate: {100*passed/total:.1f}%\n")
 
     if failed:
-        print("  ⚠️  Some checks failed — see details above.\n")
+        print("  Some checks failed -- see details above.\n")
         sys.exit(1)
     else:
-        print("  🎉 All checks passed!\n")
+        print("  All checks passed!\n")
         sys.exit(0)

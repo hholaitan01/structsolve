@@ -84,11 +84,14 @@ def select_bars(As_req):
 # -------------------------------------------------
 def beam_flexural_design(Mu, b, d, dp, fcu, fy):
     Mu *= 1e6
-    z = 0.95 * d
-
     K = Mu / (fcu * b * d**2)
     K_lim = 0.156
     M_lim = K_lim * fcu * b * d**2
+
+    # BS 8110 Cl. 3.4.4.4: z = d[0.5 + sqrt(0.25 - K/0.9)], capped at 0.95d
+    K_for_z = min(K, K_lim)
+    z = d * (0.5 + (0.25 - K_for_z / 0.9) ** 0.5)
+    z = min(z, 0.95 * d)
 
     if K <= K_lim:
         As_req = Mu / (0.87 * fy * z)
@@ -126,11 +129,14 @@ def beam_flexural_design(Mu, b, d, dp, fcu, fy):
 # SHEAR DESIGN (BS 8110)
 # -------------------------------------------------
 def beam_shear_design(Vu, b, d, fcu, As):
-    Vu *= 1000
-    rho = As / (b * d) * 100
-
-    vc = 0.79 * (100 * rho * fcu) ** (1 / 3) / 1000
-    vc = min(vc, 0.8)
+    Vu *= 1000  # kN -> N
+    # BS 8110 Table 3.8: vc = 0.79 * (100*As/(b*d))^(1/3) * (400/d)^(1/4) / gamma_m
+    gamma_m = 1.25
+    rho_pct = min(100.0 * As / (b * d), 3.0)  # cap at 3% per BS 8110
+    depth_factor = max((400.0 / d) ** 0.25, 1.0)  # (400/d)^(1/4) >= 1.0
+    fcu_factor = min(fcu, 40.0)  # BS 8110 limits fcu to 40 for vc calc
+    vc = 0.79 * (rho_pct) ** (1.0/3) * depth_factor * (fcu_factor / 25.0) ** (1.0/3) / gamma_m
+    vc = min(vc, 0.8 * (fcu / 25.0) ** 0.5)  # max shear stress limit
 
     v = Vu / (b * d)
     Vc = vc * b * d
@@ -489,8 +495,8 @@ def deflection_check(L, d, beam_type, fy, As_req, As_prov):
     # -------------------------------------------------
     # BASIC SPAN/DEPTH LIMITS (BS 8110)
     # -------------------------------------------------
-    if beam_type == "simply":
-        basic_limit = 20
+    if beam_type in ("simply", "simply_supported", "cantilever"):
+        basic_limit = 7 if beam_type == "cantilever" else 20
     else:
         basic_limit = 26
 

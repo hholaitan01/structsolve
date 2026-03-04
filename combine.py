@@ -580,7 +580,7 @@ def _sidebar():
             <div style='font-family:Syne,sans-serif;font-weight:800;color:#E8EAF0;font-size:1.15rem'>StructSolve</div>
             <div style='color:#8B92A8;font-size:.68rem;margin-top:2px'>BS 8110-1:1997</div>
         </div>""", unsafe_allow_html=True)
-        _options = ["🏠 Home", "🔩 Beam Analysis", "🏛️ Frame Analysis", "🧱 RC Design", "📖 Documentation"]
+        _options = ["🏠 Home", "🔩 Beam Analysis", "🏛️ Frame Analysis", "🧱 RC Design", "🔧 Tools", "📖 Documentation"]
         # Check if homepage requested a navigation
         _target = st.session_state.pop("_nav_target", None)
         _idx = _options.index(_target) if _target in _options else 0
@@ -598,6 +598,12 @@ def _sidebar():
         ↳ Length: m / mm<br>
         ↳ Force: kN / kNm<br>
         ↳ Stress: N/mm²</div>""", unsafe_allow_html=True)
+        st.markdown("---")
+        if st.button("🗑️  Reset Session", use_container_width=True, key="reset_session"):
+            for key in list(st.session_state.keys()):
+                if key != "nav_module":
+                    del st.session_state[key]
+            st.rerun()
     return module
 
 
@@ -1838,6 +1844,154 @@ def design_page():
 
 
 # ══════════════════════════════════════════════════════════════
+# TOOLS PAGE — Unit Converter & Load Combinations
+# ══════════════════════════════════════════════════════════════
+def tools_page():
+    st.markdown("""<div class='main-header'>
+        <h1>🔧 Engineering Tools <span class='badge'>UTILITIES</span></h1>
+        <p>Unit converter · Load combination calculator · Section properties</p>
+    </div>""", unsafe_allow_html=True)
+
+    t_unit, t_load, t_sect = st.tabs(["📐 Unit Converter", "⚖️ Load Combinations", "📏 Section Properties"])
+
+    # ── UNIT CONVERTER ─────────────────────────────────────────
+    with t_unit:
+        st.markdown("<div class='section-label'>Unit Converter</div>", unsafe_allow_html=True)
+        cat = st.selectbox("Category", ["Length", "Force", "Moment", "Stress", "Area"], key="uc_cat")
+
+        units = {
+            "Length":  {"m": 1.0, "mm": 1e3, "cm": 1e2, "km": 1e-3, "in": 39.3701, "ft": 3.28084},
+            "Force":   {"kN": 1.0, "N": 1e3, "MN": 1e-3, "kgf": 101.972, "lbf": 224.809},
+            "Moment":  {"kNm": 1.0, "Nm": 1e3, "kNmm": 1e3, "Nmm": 1e6, "kgf.m": 101.972},
+            "Stress":  {"N/mm\u00b2": 1.0, "kN/m\u00b2": 1e3, "MPa": 1.0, "GPa": 1e-3, "psi": 145.038},
+            "Area":    {"mm\u00b2": 1.0, "cm\u00b2": 1e-2, "m\u00b2": 1e-6, "in\u00b2": 1.55e-3},
+        }
+
+        u = units[cat]
+        unames = list(u.keys())
+        c1, c2, c3 = st.columns([1.5, 0.3, 1.5])
+        from_unit = c1.selectbox("From", unames, key="uc_from")
+        c2.markdown("<div style='text-align:center;padding:2rem 0;color:#4ECDC4;font-size:1.5rem'>\u2192</div>",
+                     unsafe_allow_html=True)
+        to_unit = c3.selectbox("To", [x for x in unames if x != from_unit], key="uc_to")
+        val = st.number_input(f"Value ({from_unit})", value=1.0, format="%.6f", key="uc_val")
+
+        # Convert: val in from_unit -> base -> to_unit
+        base_val = val / u[from_unit]  # convert to base unit
+        result = base_val * u[to_unit]
+
+        st.markdown(f"""<div class='metric-grid'>
+            <div class='metric-box'><div class='val' style='font-size:1.1rem'>{val:.6g}</div>
+            <div class='lbl'>{from_unit}</div></div>
+            <div class='metric-box'><div class='val grn' style='font-size:1.1rem'>{result:.6g}</div>
+            <div class='lbl'>{to_unit}</div></div>
+        </div>""", unsafe_allow_html=True)
+
+        # Quick reference table
+        st.markdown("<div class='section-label'>Quick Reference</div>", unsafe_allow_html=True)
+        ref_rows = []
+        for uname, factor in u.items():
+            converted = (val / u[from_unit]) * factor
+            ref_rows.append({"Unit": uname, "Value": f"{converted:.6g}"})
+        st.dataframe(pd.DataFrame(ref_rows), use_container_width=True, hide_index=True)
+
+    # ── LOAD COMBINATIONS ──────────────────────────────────────
+    with t_load:
+        st.markdown("<div class='section-label'>BS 8110 Load Combinations</div>", unsafe_allow_html=True)
+        st.markdown("""<div class='result-card muted'>
+            <b>BS 8110-1:1997</b> ultimate load factors:<br>
+            <b style='color:#4ECDC4'>Combination 1:</b> 1.4 Gk + 1.6 Qk (gravity)<br>
+            <b style='color:#FFE66D'>Combination 2:</b> 1.2 Gk + 1.2 Qk + 1.2 Wk (gravity + wind)<br>
+            <b style='color:#FF6B6B'>Combination 3:</b> 1.4 Gk + 1.4 Wk (gravity + wind, no live)
+        </div>""", unsafe_allow_html=True)
+
+        lc1, lc2, lc3 = st.columns(3)
+        Gk = lc1.number_input("Dead load Gk (kN/m)", value=10.0, step=1.0, key="lc_gk")
+        Qk = lc2.number_input("Live load Qk (kN/m)", value=5.0, step=1.0, key="lc_qk")
+        Wk = lc3.number_input("Wind load Wk (kN/m)", value=0.0, step=1.0, key="lc_wk")
+
+        combo1 = 1.4 * Gk + 1.6 * Qk
+        combo2 = 1.2 * Gk + 1.2 * Qk + 1.2 * Wk
+        combo3 = 1.4 * Gk + 1.4 * Wk
+        governing = max(combo1, combo2, combo3)
+        gov_name = "Combo 1" if governing == combo1 else ("Combo 2" if governing == combo2 else "Combo 3")
+
+        st.markdown(f"""<div class='metric-grid'>
+            <div class='metric-box'><div class='val'>{combo1:.2f}</div>
+            <div class='lbl'>Combo 1: 1.4G+1.6Q</div></div>
+            <div class='metric-box'><div class='val yel'>{combo2:.2f}</div>
+            <div class='lbl'>Combo 2: 1.2(G+Q+W)</div></div>
+            <div class='metric-box'><div class='val red'>{combo3:.2f}</div>
+            <div class='lbl'>Combo 3: 1.4(G+W)</div></div>
+            <div class='metric-box'><div class='val grn'>{governing:.2f}</div>
+            <div class='lbl'>Governing ({gov_name})</div></div>
+        </div>""", unsafe_allow_html=True)
+
+        # Serviceability combinations
+        st.markdown("<div class='section-label'>Serviceability Load Combinations</div>", unsafe_allow_html=True)
+        sls1 = Gk + Qk
+        sls2 = Gk + 0.8 * Qk + 0.8 * Wk
+        st.markdown(f"""<div class='metric-grid'>
+            <div class='metric-box'><div class='val'>{sls1:.2f}</div>
+            <div class='lbl'>SLS: Gk + Qk</div></div>
+            <div class='metric-box'><div class='val yel'>{sls2:.2f}</div>
+            <div class='lbl'>SLS: Gk + 0.8Qk + 0.8Wk</div></div>
+        </div>""", unsafe_allow_html=True)
+
+    # ── SECTION PROPERTIES ─────────────────────────────────────
+    with t_sect:
+        st.markdown("<div class='section-label'>Rectangular Section Properties</div>", unsafe_allow_html=True)
+        sp1, sp2 = st.columns(2)
+        b_sp = sp1.number_input("Width b (mm)", value=300.0, min_value=1.0, key="sp_b")
+        h_sp = sp2.number_input("Depth h (mm)", value=500.0, min_value=1.0, key="sp_h")
+
+        area_sp = b_sp * h_sp
+        ixx = b_sp * h_sp**3 / 12.0
+        iyy = h_sp * b_sp**3 / 12.0
+        zxx = b_sp * h_sp**2 / 6.0
+        zyy = h_sp * b_sp**2 / 6.0
+        rxx = (ixx / area_sp) ** 0.5
+        ryy = (iyy / area_sp) ** 0.5
+
+        st.markdown(f"""<div class='metric-grid'>
+            <div class='metric-box'><div class='val'>{area_sp:.0f}</div>
+            <div class='lbl'>Area (mm\u00b2)</div></div>
+            <div class='metric-box'><div class='val'>{ixx:.0f}</div>
+            <div class='lbl'>Ixx (mm\u2074)</div></div>
+            <div class='metric-box'><div class='val yel'>{iyy:.0f}</div>
+            <div class='lbl'>Iyy (mm\u2074)</div></div>
+            <div class='metric-box'><div class='val'>{zxx:.0f}</div>
+            <div class='lbl'>Zxx (mm\u00b3)</div></div>
+            <div class='metric-box'><div class='val yel'>{zyy:.0f}</div>
+            <div class='lbl'>Zyy (mm\u00b3)</div></div>
+            <div class='metric-box'><div class='val grn'>{rxx:.1f}</div>
+            <div class='lbl'>rxx (mm)</div></div>
+            <div class='metric-box'><div class='val grn'>{ryy:.1f}</div>
+            <div class='lbl'>ryy (mm)</div></div>
+        </div>""", unsafe_allow_html=True)
+
+        # Circular section
+        st.markdown("<div class='section-label'>Circular Section Properties</div>", unsafe_allow_html=True)
+        d_circ = st.number_input("Diameter D (mm)", value=300.0, min_value=1.0, key="sp_d_circ")
+        import math
+        area_c = math.pi * d_circ**2 / 4.0
+        ixx_c = math.pi * d_circ**4 / 64.0
+        zxx_c = math.pi * d_circ**3 / 32.0
+        rxx_c = d_circ / 4.0
+
+        st.markdown(f"""<div class='metric-grid'>
+            <div class='metric-box'><div class='val'>{area_c:.0f}</div>
+            <div class='lbl'>Area (mm\u00b2)</div></div>
+            <div class='metric-box'><div class='val'>{ixx_c:.0f}</div>
+            <div class='lbl'>I (mm\u2074)</div></div>
+            <div class='metric-box'><div class='val'>{zxx_c:.0f}</div>
+            <div class='lbl'>Z (mm\u00b3)</div></div>
+            <div class='metric-box'><div class='val grn'>{rxx_c:.1f}</div>
+            <div class='lbl'>r (mm)</div></div>
+        </div>""", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════
 def main():
@@ -1846,6 +2000,7 @@ def main():
     elif "Beam"  in module: beam_page()
     elif "Frame" in module: frame_page()
     elif "RC"    in module: design_page()
+    elif "Tools" in module: tools_page()
     elif "Doc"   in module: docs_page()
 
 if __name__ == "__main__":
