@@ -199,13 +199,10 @@ class BeamSolver:
                     B[i] -= (2*ei/L) * (-3*delta_left/L)
                 else:
                     # Left span is a cantilever (tip at i-1, root at i):
-                    # i is the root → use modified stiffness 3EI/L
-                    # Modified SDE: M_root = (3EI/L)*θ_root + FEM_far - FEM_tip/2 - cant
-                    # (far = near-end of root = fems[i-1][1], tip = fems[i-1][0])
-                    A[i, i] += 3*ei/L
-                    fem_mod = fems[i-1][1] - fems[i-1][0]/2
-                    B[i] -= fem_mod
-                    B[i] += cant[i-1]  # static moment opposes FEM sign
+                    # Cantilever is statically determinate — no stiffness
+                    # contribution to the joint. Only inject static root
+                    # moment as an external moment on the equilibrium.
+                    B[i] += cant[i-1]
 
             # Right span (i): use modified stiffness if it is a cantilever
             if i < n - 1:
@@ -218,13 +215,10 @@ class BeamSolver:
                     B[i] -= (2*ei/L) * (-3*delta_right/L)
                 else:
                     # Right span is a cantilever (root at i, tip at i+1):
-                    # i is the root → use modified stiffness 3EI/L
-                    # Modified SDE: M_near = (3EI/L)*θ_root + FEM_near - FEM_far/2 - cant
-                    # (near = fems[i][0], far/tip = fems[i][1])
-                    A[i, i] += 3*ei/L
-                    fem_mod = fems[i][0] - fems[i][1]/2
-                    B[i] -= fem_mod
-                    B[i] += cant[i]  # static moment opposes FEM sign
+                    # Cantilever is statically determinate — no stiffness
+                    # contribution to the joint. Only inject static root
+                    # moment as an external moment on the equilibrium.
+                    B[i] += cant[i]
 
         # Guard: ensure no zero rows
         for i in range(n):

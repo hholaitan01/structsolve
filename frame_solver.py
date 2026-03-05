@@ -228,27 +228,77 @@ def _cantilever_tip_moment(nid, members, mdata, loads):
 
 def _detect_sway_groups(nodes, members):
     """
-    Columns = members with |dy|>0.30*L.
-    Returns [(label, [member_ids])] sorted bottom→top.
+    Detect sway groups using beam-connectivity of column top nodes.
+
+    A member is "column-like" if |dy| > |dx| (more vertical than horizontal).
+    Columns share a sway DOF when their top (higher-y) endpoints are connected
+    through non-column members (beams and rafters). This correctly handles:
+      - Portal frames: columns at same floor connected by a beam
+      - Multi-story frames: each story gets its own sway group
+      - Gable frames: columns connected via inclined rafters share one group
+
+    Returns [(label, [member_ids])] sorted bottom→top by minimum y.
     Cantilever-arm members (far-end is free tip) are excluded from sway.
     """
+    from collections import defaultdict
     nmap = {n["id"]: n for n in nodes}
-    groups = {}
+
+    # Step 1: Classify members as column-like or beam-like
+    col_members = []
+    beam_members = []
     for mem in members:
         ni = nmap[mem["ni"]]; nj = nmap[mem["nj"]]
         dx = abs(nj["x"]-ni["x"]); dy = abs(nj["y"]-ni["y"])
         L = np.hypot(dx, dy)
         if L < 1e-12: continue
-        # Skip cantilever arms (free far end with no other members)
+        # Skip cantilever arms
         if _is_far_released(nj, members, mem["id"]) and nj.get("support","Free")=="Free":
             continue
-        if dy > dx:  # column if more vertical than horizontal (45° threshold)
-            ym = round((ni["y"]+nj["y"])/2.0, 1)
-            groups.setdefault(ym, []).append(mem["id"])
-    if not groups: return []
+        if dy > dx:
+            col_members.append(mem)
+        else:
+            beam_members.append(mem)
+
+    if not col_members:
+        return []
+
+    # Step 2: Union-Find on nodes connected by beam-like members
+    parent = {}
+    def find(x):
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for mem in beam_members:
+        union(mem["ni"], mem["nj"])
+
+    # Step 3: Group columns by the connected component of their TOP node
+    groups = defaultdict(list)
+    for mem in col_members:
+        ni = nmap[mem["ni"]]; nj = nmap[mem["nj"]]
+        top_nid = mem["nj"] if nj["y"] >= ni["y"] else mem["ni"]
+        root = find(top_nid)
+        groups[root].append(mem["id"])
+
+    # Step 4: Sort groups by minimum y of any node, label them
+    mem_map = {m["id"]: m for m in members}
+    def group_min_y(mids):
+        ys = []
+        for mid in mids:
+            m = mem_map[mid]
+            ys.append(nmap[m["ni"]]["y"])
+            ys.append(nmap[m["nj"]]["y"])
+        return min(ys)
+
+    sorted_groups = sorted(groups.values(), key=group_min_y)
     result = []
-    for i,(ym,mids) in enumerate(sorted(groups.items())):
-        lbl = f"S{i+1}" if len(groups)>1 else "1"
+    for i, mids in enumerate(sorted_groups):
+        lbl = f"S{i+1}" if len(sorted_groups) > 1 else "1"
         result.append((lbl, mids))
     return result
 
