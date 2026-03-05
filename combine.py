@@ -60,6 +60,34 @@ section[data-testid="stSidebar"]>div{padding-top:1rem}
 .workings-box{background:#0A0C12;border:1px solid #2A2E40;border-radius:8px;padding:1rem 1.2rem;
   font-size:.74rem;line-height:1.9;color:#C0C6D4;white-space:pre-wrap;
   font-family:'JetBrains Mono',monospace;max-height:520px;overflow-y:auto}
+
+/* ── Textbook-style workings ─────────────────────────── */
+.tb-workings{background:#0A0C12;border:1px solid #2A2E40;border-radius:10px;
+  padding:1.4rem 1.6rem;font-family:'JetBrains Mono',monospace;
+  max-height:700px;overflow-y:auto;color:#C0C6D4;font-size:.78rem;line-height:1.85}
+.tb-step{margin-bottom:1.6rem}
+.tb-step-hdr{display:flex;align-items:center;gap:.7rem;margin-bottom:.8rem;
+  padding-bottom:.5rem;border-bottom:2px solid #4ECDC4}
+.tb-step-num{background:#4ECDC4;color:#0F1117;font-weight:800;font-size:.72rem;
+  width:26px;height:26px;line-height:26px;text-align:center;border-radius:50%;flex-shrink:0}
+.tb-step-title{font-family:'Syne',sans-serif;font-weight:700;font-size:.92rem;
+  color:#E8EAF0;letter-spacing:-.3px}
+.tb-formula{background:#151820;border-left:3px solid #3A3F55;border-radius:0 6px 6px 0;
+  padding:.55rem .9rem;margin:.5rem 0;color:#8B92A8;font-size:.72rem;line-height:1.7;
+  white-space:pre-wrap}
+.tb-formula b,.tb-formula strong{color:#C0C6D4}
+.tb-span-hdr{color:#4ECDC4;font-weight:600;font-size:.78rem;margin:.9rem 0 .4rem;
+  padding-left:.2rem;border-left:3px solid #4ECDC4;padding-left:.6rem}
+.tb-eq{padding:.15rem 0 .15rem .6rem;white-space:pre-wrap;font-size:.74rem;line-height:1.8}
+.tb-eq .lbl{color:#8B92A8}.tb-eq .val{color:#E8EAF0}
+.tb-result{background:#1A2230;border:1px solid #4ECDC4;border-radius:6px;
+  padding:.5rem .9rem;margin:.6rem 0;color:#4ECDC4;font-weight:600;font-size:.76rem}
+.tb-result.warn{border-color:#FFE66D;color:#FFE66D}
+.tb-result.pass{border-color:#6BCB77;color:#6BCB77}
+.tb-result.fail{border-color:#FF6B6B;color:#FF6B6B}
+.tb-note{color:#6B7394;font-size:.7rem;font-style:italic;padding-left:.6rem;margin:.3rem 0}
+.tb-joint{color:#B0B8CC;font-size:.74rem;padding:.15rem 0 .15rem .6rem}
+.tb-joint .sup-type{color:#FFE66D;font-size:.68rem}
 div[data-testid="stNumberInput"] label,
 div[data-testid="stSelectbox"] label,
 div[data-testid="stRadio"] label{color:#8B92A8!important;font-size:.78rem!important}
@@ -350,12 +378,36 @@ def draw_frame(nodes, members, results=None):
     fig.tight_layout(); st.pyplot(fig, use_container_width=True); plt.close(fig)
 
 
-# ─── Beam workings ────────────────────────────────────────────
+# ─── Beam workings (textbook HTML) ────────────────────────────
+def _tb_step(num, title, body):
+    """Wrap a step in textbook HTML."""
+    return (f"<div class='tb-step'>"
+            f"<div class='tb-step-hdr'><div class='tb-step-num'>{num}</div>"
+            f"<div class='tb-step-title'>{title}</div></div>"
+            f"{body}</div>")
+
+def _tb_span(label):
+    return f"<div class='tb-span-hdr'>{label}</div>"
+
+def _tb_eq(s):
+    return f"<div class='tb-eq'>{s}</div>"
+
+def _tb_formula(s):
+    return f"<div class='tb-formula'>{s}</div>"
+
+def _tb_result(s, cls=""):
+    return f"<div class='tb-result {cls}'>{s}</div>"
+
+def _tb_note(s):
+    return f"<div class='tb-note'>{s}</div>"
+
+def _e(s):
+    """Escape HTML entities."""
+    return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+
+
 def beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_corr):
-    W = []
-    def ln(s=""): W.append(s)
-    SEP = "\u2550" * 60
-    def h(s): W.extend([SEP, f"  {s}", SEP])
+    H = []  # collect HTML fragments
 
     # Identify cantilever spans
     cant_spans = set()
@@ -365,21 +417,19 @@ def beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_
         if i == n_spans - 1 and support_types[n_spans] == "Free":
             cant_spans.add(i)
 
-    h("STEP 1 \u2014 FIXED-END MOMENTS")
-    ln()
-    ln("  Formula:  M_Fab = -wL\u00b2/12  (UDL, near end)")
-    ln("            M_Fba = +wL\u00b2/12  (UDL, far end)")
-    ln("            M_Fab = -Pab\u00b2/L\u00b2 (Point, near)")
-    ln("            M_Fba = +Pa\u00b2b/L\u00b2 (Point, far)")
-    ln()
+    # ── STEP 1: Fixed-End Moments ──────────────────────────────
+    body = _tb_formula(
+        "<b>UDL:</b>  M<sub>F,AB</sub> = \u2212wL\u00b2/12 ,   M<sub>F,BA</sub> = +wL\u00b2/12\n"
+        "<b>Point:</b>  M<sub>F,AB</sub> = \u2212Pab\u00b2/L\u00b2 ,   M<sub>F,BA</sub> = +Pa\u00b2b/L\u00b2"
+    )
     for i in range(n_spans):
         A = chr(65+i); B = chr(66+i)
         L = spans[i]["L"]
         lds = span_loads.get(i, [])
         is_cant = i in cant_spans
-        ln(f"  \u2500\u2500 Span {A}-{B}  (L = {L:.3f} m){' [cantilever]' if is_cant else ''} \u2500\u2500")
+        cant_tag = "  <span style='color:#FF6B6B'>[cantilever]</span>" if is_cant else ""
+        body += _tb_span(f"Span {A}\u2013{B}  (L = {L:.3f} m){cant_tag}")
         if is_cant:
-            # Cantilever: show root moment by statics, not patched FEMs
             tip_at_near = (i == 0 and support_types[0] == "Free")
             root_lbl = B if tip_at_near else A
             tip_lbl  = A if tip_at_near else B
@@ -390,87 +440,86 @@ def beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_
                 elif t == "Point":
                     arm = (L - a_pos) if tip_at_near else a_pos
                     M_root += ld["mag"] * arm
-            ln(f"     Cantilever (root at {root_lbl}, free tip at {tip_lbl})")
-            ln(f"     Solved by statics: M_root = \u03a3(loads \u00d7 arm) = {M_root:.4f} kNm")
-            ln(f"     M_{tip_lbl}{root_lbl} = 0  [free end],  M_{root_lbl}{tip_lbl} = {-M_root:.4f} kNm")
+            body += _tb_note(f"Cantilever: root at {root_lbl}, free tip at {tip_lbl}")
+            body += _tb_eq(f"Solved by statics:  M<sub>root</sub> = \u03a3(P \u00d7 arm) = <b>{M_root:.4f} kNm</b>")
+            body += _tb_result(f"M<sub>{tip_lbl}{root_lbl}</sub> = 0  ,   M<sub>{root_lbl}{tip_lbl}</sub> = {-M_root:.4f} kNm")
         elif not lds:
-            ln(f"     No load  \u2192  M_F{A}{B} = 0.000 kNm,  M_F{B}{A} = 0.000 kNm")
+            body += _tb_eq(f"No load  \u2192  M<sub>F,{A}{B}</sub> = 0.000 kNm ,  M<sub>F,{B}{A}</sub> = 0.000 kNm")
         else:
-            # Recompute standard FEMs from formulas (not from patched fems array)
             std_m1, std_m2 = 0.0, 0.0
             for ld in lds:
                 t = ld["type"]
                 if t == "UDL":
                     w = ld["mag"]
-                    ln(f"     UDL:  w = {w:.2f} kN/m, L = {L:.3f} m")
-                    ln(f"     M_F{A}{B} = -wL\u00b2/12 = -{w:.2f}\u00d7{L:.3f}\u00b2/12 = {-w*L**2/12:.4f} kNm")
-                    ln(f"     M_F{B}{A} = +wL\u00b2/12 =  {w*L**2/12:.4f} kNm")
+                    body += _tb_eq(f"UDL:  w = {w:.2f} kN/m ,  L = {L:.3f} m")
+                    body += _tb_eq(f"M<sub>F,{A}{B}</sub> = \u2212wL\u00b2/12 = \u2212{w:.2f}\u00d7{L:.3f}\u00b2/12 = <b>{-w*L**2/12:.4f} kNm</b>")
+                    body += _tb_eq(f"M<sub>F,{B}{A}</sub> = +wL\u00b2/12 = <b>{w*L**2/12:.4f} kNm</b>")
                     std_m1 += -w*L**2/12; std_m2 += w*L**2/12
                 elif t == "Point":
                     P = ld["mag"]; a = ld["pos"]; b = L-a
-                    ln(f"     Point load: P = {P:.2f} kN, a = {a:.3f} m, b = {b:.3f} m")
-                    ln(f"     M_F{A}{B} = -Pab\u00b2/L\u00b2 = {-P*a*b**2/L**2:.4f} kNm")
-                    ln(f"     M_F{B}{A} = +Pa\u00b2b/L\u00b2 = {P*a**2*b/L**2:.4f} kNm")
+                    body += _tb_eq(f"Point load:  P = {P:.2f} kN ,  a = {a:.3f} m ,  b = {b:.3f} m")
+                    body += _tb_eq(f"M<sub>F,{A}{B}</sub> = \u2212Pab\u00b2/L\u00b2 = <b>{-P*a*b**2/L**2:.4f} kNm</b>")
+                    body += _tb_eq(f"M<sub>F,{B}{A}</sub> = +Pa\u00b2b/L\u00b2 = <b>{P*a**2*b/L**2:.4f} kNm</b>")
                     std_m1 += -P*a*b**2/L**2; std_m2 += P*a**2*b/L**2
                 elif t == "UDL-P":
-                    ln(f"     Partial UDL: w={ld['mag']:.2f} kN/m, {ld['pos']:.3f}\u2192{ld['end']:.3f} m")
+                    body += _tb_eq(f"Partial UDL:  w = {ld['mag']:.2f} kN/m ,  {ld['pos']:.3f} \u2192 {ld['end']:.3f} m")
                     a1, b1 = BeamSolver.beam_fixed_end_moments(L, ld)
                     std_m1 += a1; std_m2 += b1
                 elif t == "UVL-P":
-                    ln(f"     UVL: w_max={ld['mag']:.2f} kN/m, shape={ld.get('shape','')}")
+                    body += _tb_eq(f"UVL:  w<sub>max</sub> = {ld['mag']:.2f} kN/m ,  shape = {_e(ld.get('shape',''))}")
                     a1, b1 = BeamSolver.beam_fixed_end_moments(L, ld)
                     std_m1 += a1; std_m2 += b1
-            ln(f"     \u2234 M_F{A}{B} = {std_m1:.4f} kNm   M_F{B}{A} = {std_m2:.4f} kNm")
-        ln()
+            body += _tb_result(f"\u2234  M<sub>F,{A}{B}</sub> = {std_m1:.4f} kNm  ,   M<sub>F,{B}{A}</sub> = {std_m2:.4f} kNm")
+    H.append(_tb_step(1, "Fixed-End Moments", body))
 
-    h("STEP 2 \u2014 SLOPE-DEFLECTION EQUATIONS")
-    ln()
-    ln("  M_ij = M_Fij + (2EI/L)[2\u03b8\u1d35 + \u03b8\u2c7c \u2212 3\u0394/L]")
-    ln()
+    # ── STEP 2: Slope-Deflection Equations ─────────────────────
+    body = _tb_formula(
+        "<b>General SDE:</b>\n"
+        "M<sub>ij</sub> = M<sub>F,ij</sub> + (2EI/L)[ 2\u03b8<sub>i</sub> + \u03b8<sub>j</sub> \u2212 3\u0394/L ]"
+    )
     for i in range(n_spans):
         A = chr(65+i); B = chr(66+i)
         if i in cant_spans:
-            ln(f"  \u2500\u2500 Span {A}-{B}:  cantilever \u2192 solved by statics (see Step 5) \u2500\u2500")
-            ln()
+            body += _tb_span(f"Span {A}\u2013{B}:  cantilever")
+            body += _tb_note("Solved by statics \u2014 see Step 5")
             continue
         L = spans[i]["L"]; EI = spans[i]["EI"]
         k = 2*EI/L; delta = sway_corr.get(i, 0.0)
-        # Use standard FEMs recomputed from loads, not patched fems
         std_m1, std_m2 = 0.0, 0.0
         for ld in span_loads.get(i, []):
             a1, b1 = BeamSolver.beam_fixed_end_moments(L, ld)
             std_m1 += a1; std_m2 += b1
-        ln(f"  \u2500\u2500 Span {A}-{B}:  L={L:.3f}m,  EI={EI:.4f},  2EI/L = {k:.4f} \u2500\u2500")
+        body += _tb_span(f"Span {A}\u2013{B}  :  L = {L:.3f} m ,  EI = {EI:.4f} ,  2EI/L = {k:.4f}")
         if abs(delta) > 1e-9:
-            ln(f"     Chord shortening \u0394 = {delta:.6f} m  \u2192  3\u0394/L = {3*delta/L:.8f}")
-        ln(f"     M_{A}{B} = {std_m1:+.4f} + {k:.4f}[2\u03b8_{A} + \u03b8_{B} \u2212 {3*delta/L:.6f}]")
-        ln(f"     M_{B}{A} = {std_m2:+.4f} + {k:.4f}[2\u03b8_{B} + \u03b8_{A} \u2212 {3*delta/L:.6f}]")
-        ln()
+            body += _tb_eq(f"Chord rotation:  \u0394 = {delta:.6f} m  \u2192  3\u0394/L = {3*delta/L:.8f}")
+        body += _tb_eq(f"M<sub>{A}{B}</sub> = {std_m1:+.4f} + {k:.4f}[ 2\u03b8<sub>{A}</sub> + \u03b8<sub>{B}</sub> \u2212 {3*delta/L:.6f} ]")
+        body += _tb_eq(f"M<sub>{B}{A}</sub> = {std_m2:+.4f} + {k:.4f}[ 2\u03b8<sub>{B}</sub> + \u03b8<sub>{A}</sub> \u2212 {3*delta/L:.6f} ]")
+    H.append(_tb_step(2, "Slope-Deflection Equations", body))
 
-    h("STEP 3 \u2014 BOUNDARY CONDITIONS & EQUILIBRIUM")
-    ln()
+    # ── STEP 3: Boundary Conditions & Equilibrium ──────────────
+    body = ""
     for i in range(n_spans+1):
         stype = support_types[i]
         if stype in ("Fixed", "Cantilever"):
-            bc = "0 (fixed)"
+            bc = "= 0  <span style='color:#6BCB77'>(fixed)</span>"
         elif stype == "Free":
-            bc = "free (cantilever tip \u2014 not an SDE unknown)"
+            bc = "\u2014  <span style='color:#FF6B6B'>free tip (not an SDE unknown)</span>"
         else:
-            bc = "unknown (free to rotate)"
-        ln(f"     Joint {chr(65+i)} ({stype}):  \u03b8_{chr(65+i)} = {bc}")
-    ln()
-    ln("  Equilibrium: \u03a3M = 0 at each free joint \u2192 solve simultaneous equations")
-    ln()
+            bc = "\u2014  <span style='color:#FFE66D'>unknown (free to rotate)</span>"
+        body += f"<div class='tb-joint'>Joint <b>{chr(65+i)}</b> ({stype}):  \u03b8<sub>{chr(65+i)}</sub> {bc}</div>"
+    body += _tb_formula("<b>Equilibrium:</b>  \u03a3M = 0 at each free joint  \u2192  solve simultaneous equations")
+    H.append(_tb_step(3, "Boundary Conditions &amp; Equilibrium", body))
 
-    h("STEP 4 \u2014 SOLVED ROTATIONS")
-    ln()
+    # ── STEP 4: Solved Rotations ───────────────────────────────
+    body = ""
     for i in range(n_spans+1):
         th = thetas[i] if i < len(thetas) else 0.0
-        ln(f"     \u03b8_{chr(65+i)} = {th:.10f} rad   [{support_types[i]}]")
-    ln()
+        stype = support_types[i]
+        body += _tb_eq(f"\u03b8<sub>{chr(65+i)}</sub> = <b>{th:.10f} rad</b>  <span class='tb-joint sup-type'>[{stype}]</span>")
+    H.append(_tb_step(4, "Solved Rotations", body))
 
-    h("STEP 5 \u2014 FINAL END MOMENTS  (back-substitution)")
-    ln()
+    # ── STEP 5: Final End Moments ──────────────────────────────
+    body = _tb_note("Back-substituting \u03b8 values into the slope-deflection equations:")
     for i in range(n_spans):
         A = chr(65+i); B = chr(66+i)
         L = spans[i]["L"]; EI = spans[i]["EI"]
@@ -478,98 +527,142 @@ def beam_workings(n_spans, spans, support_types, span_loads, fems, thetas, sway_
         m1, m2 = fems[i]; tA = thetas[i]; tB = thetas[i+1]
         left_cant  = (i == 0         and support_types[0]       == "Free")
         right_cant = (i == n_spans-1 and support_types[n_spans] == "Free")
-        ln(f"  \u2500\u2500 Span {A}-{B} \u2500\u2500")
+        body += _tb_span(f"Span {A}\u2013{B}")
         if left_cant:
-            # Cantilever: tip at A, root at B — static calculation
             M_cant = 0.0
             for ld in span_loads.get(i, []):
-                t = ld.get("type"); a = ld.get("pos", 0.0)
-                arm = L - a
+                t = ld.get("type"); a = ld.get("pos", 0.0); arm = L - a
                 if t == "UDL":   M_cant -= ld["mag"] * L**2 / 2.0
                 elif t == "Point": M_cant -= ld["mag"] * arm
-            ln(f"     Cantilever (tip at {A}, root at {B}) — static method:")
-            ln(f"     M_{A}{B} = 0.000 kNm  [free tip, zero moment]")
-            ln(f"     M_{B}{A} = \u03a3(loads \u00d7 arm) = {M_cant:.4f} kNm")
+            body += _tb_note(f"Cantilever (tip at {A}, root at {B}) \u2014 static method")
+            body += _tb_result(f"M<sub>{A}{B}</sub> = 0.000 kNm  [free tip]")
+            body += _tb_result(f"M<sub>{B}{A}</sub> = {M_cant:.4f} kNm")
         elif right_cant:
-            # Cantilever: root at A, tip at B — static calculation
             M_cant = 0.0
             for ld in span_loads.get(i, []):
                 t = ld.get("type"); a = ld.get("pos", 0.0)
                 if t == "UDL":   M_cant -= ld["mag"] * L**2 / 2.0
                 elif t == "Point": M_cant -= ld["mag"] * a
-            ln(f"     Cantilever (root at {A}, tip at {B}) — static method:")
-            ln(f"     M_{A}{B} = \u03a3(loads \u00d7 arm) = {M_cant:.4f} kNm")
-            ln(f"     M_{B}{A} = 0.000 kNm  [free tip, zero moment]")
+            body += _tb_note(f"Cantilever (root at {A}, tip at {B}) \u2014 static method")
+            body += _tb_result(f"M<sub>{A}{B}</sub> = {M_cant:.4f} kNm")
+            body += _tb_result(f"M<sub>{B}{A}</sub> = 0.000 kNm  [free tip]")
         else:
             M_AB = m1 + k*(2*tA + tB - 3*delta/L)
             M_BA = m2 + k*(2*tB + tA - 3*delta/L)
-            ln(f"     M_{A}{B} = {m1:+.4f} + {k:.4f}[2\u00d7{tA:.8f} + {tB:.8f} \u2212 {3*delta/L:.8f}]")
-            ln(f"          = {M_AB:.4f} kNm")
-            ln(f"     M_{B}{A} = {m2:+.4f} + {k:.4f}[2\u00d7{tB:.8f} + {tA:.8f} \u2212 {3*delta/L:.8f}]")
-            ln(f"          = {M_BA:.4f} kNm")
-        ln()
-    return W
+            body += _tb_eq(f"M<sub>{A}{B}</sub> = {m1:+.4f} + {k:.4f}[ 2\u00d7{tA:.8f} + {tB:.8f} \u2212 {3*delta/L:.8f} ]")
+            body += _tb_result(f"M<sub>{A}{B}</sub> = {M_AB:.4f} kNm")
+            body += _tb_eq(f"M<sub>{B}{A}</sub> = {m2:+.4f} + {k:.4f}[ 2\u00d7{tB:.8f} + {tA:.8f} \u2212 {3*delta/L:.8f} ]")
+            body += _tb_result(f"M<sub>{B}{A}</sub> = {M_BA:.4f} kNm")
+    H.append(_tb_step(5, "Final End Moments (Back-Substitution)", body))
+
+    return H
 
 
-# ─── Design workings ──────────────────────────────────────────
+# ─── Design workings (textbook HTML) ─────────────────────────
 def design_workings(beam_system, section_type, L, bw, D, cover,
                     fcu, fy, bf, hf, gk, qk, wu, Mu, Vu, flex_zones, shear, defl):
-    W = []
-    def ln(s=""): W.append(s)
-    SEP = "\u2550" * 60
-    def h(s): W.extend([SEP, f"  {s}", SEP])
+    H = []
     d = D - cover
     fl = list(flex_zones.values())[0]
 
-    h("STEP 1 \u2014 ULTIMATE DESIGN LOAD")
-    ln(f"  wu = 1.4gk + 1.6qk = 1.4\u00d7{gk:.3f} + 1.6\u00d7{qk:.3f} = {wu:.4f} kN/m")
-    ln()
+    # STEP 1: Ultimate Design Load
+    body = _tb_formula("<b>BS 8110 Cl. 2.4.3:</b>  w<sub>u</sub> = 1.4 G<sub>k</sub> + 1.6 Q<sub>k</sub>")
+    body += _tb_eq(f"w<sub>u</sub> = 1.4 \u00d7 {gk:.3f} + 1.6 \u00d7 {qk:.3f}")
+    body += _tb_result(f"w<sub>u</sub> = {wu:.4f} kN/m")
+    H.append(_tb_step(1, "Ultimate Design Load", body))
 
-    h("STEP 2 \u2014 DESIGN MOMENTS & SHEAR")
+    # STEP 2: Design Moments & Shear
+    body = ""
     if "Simply" in beam_system:
-        ln(f"  Mu = wuL\u00b2/8 = {wu:.4f}\u00d7{L:.3f}\u00b2/8 = {wu*L**2/8:.4f} kNm")
-        ln(f"  Vu = wuL/2  = {wu:.4f}\u00d7{L:.3f}/2  = {wu*L/2:.4f} kN")
+        body += _tb_formula("<b>Simply supported:</b>  M<sub>u</sub> = w<sub>u</sub>L\u00b2/8  ,   V<sub>u</sub> = w<sub>u</sub>L/2")
+        body += _tb_eq(f"M<sub>u</sub> = {wu:.4f} \u00d7 {L:.3f}\u00b2 / 8 = <b>{wu*L**2/8:.4f} kNm</b>")
+        body += _tb_eq(f"V<sub>u</sub> = {wu:.4f} \u00d7 {L:.3f} / 2 = <b>{wu*L/2:.4f} kN</b>")
     else:
-        ln(f"  Governing sagging Mu = {Mu:.4f} kNm  (from analysis)")
-        ln(f"  Governing shear Vu = {Vu:.4f} kN  (from analysis)")
-    ln()
+        body += _tb_eq(f"Governing sagging moment:  M<sub>u</sub> = <b>{Mu:.4f} kNm</b>  (from analysis)")
+        body += _tb_eq(f"Governing shear force:  V<sub>u</sub> = <b>{Vu:.4f} kN</b>  (from analysis)")
+    H.append(_tb_step(2, "Design Moments &amp; Shear", body))
 
-    h("STEP 3 \u2014 FLEXURAL DESIGN  (BS 8110 Cl. 3.4.4)")
-    ln(f"  b = {bw:.0f} mm,  D = {D:.0f} mm,  cover = {cover:.0f} mm,  d = {d:.0f} mm")
-    ln(f"  fcu = {fcu:.0f} N/mm\u00b2,  fy = {fy:.0f} N/mm\u00b2")
-    ln()
+    # STEP 3: Flexural Design
+    body = _tb_formula("<b>BS 8110 Cl. 3.4.4 \u2014 Flexural Design</b>")
+    body += _tb_eq(f"b = {bw:.0f} mm  ,  D = {D:.0f} mm  ,  cover = {cover:.0f} mm  ,  d = {d:.0f} mm")
+    body += _tb_eq(f"f<sub>cu</sub> = {fcu:.0f} N/mm\u00b2  ,  f<sub>y</sub> = {fy:.0f} N/mm\u00b2")
     Mu_Nmm = Mu * 1e6
     K = Mu_Nmm / (fcu * bw * d**2)
     K_lim = 0.156
-    z = min(d * (0.5 + (0.25 - K/0.9)**0.5), 0.95*d)
-    ln(f"  K = Mu / (fcu\u00b7b\u00b7d\u00b2) = {Mu_Nmm:.0f} / ({fcu:.0f}\u00d7{bw:.0f}\u00d7{d:.0f}\u00b2)")
-    ln(f"    = {K:.6f}   (K_lim = {K_lim})")
-    ln(f"  \u2192 {'Singly reinforced' if K <= K_lim else 'DOUBLY reinforced'}")
-    ln()
-    ln(f"  Lever arm:  z = 0.5d[1 + \u221a(1 \u2212 K/0.225)]  \u2264 0.95d  = {z:.2f} mm")
-    ln()
-    ln(f"  As_req = Mu / (0.87\u00b7fy\u00b7z) = {Mu_Nmm:.0f} / (0.87\u00d7{fy:.0f}\u00d7{z:.2f})")
-    ln(f"         = {fl['As_req']:.2f} mm\u00b2")
-    ln(f"  Provide: {fl['tension_bars']}  \u2192  As_prov = {fl['As_prov']:.0f} mm\u00b2")
-    ln()
+    K_for_z = min(K, K_lim)
+    z = min(d * (0.5 + (0.25 - K_for_z/0.9)**0.5), 0.95*d)
+    body += _tb_span("Design Ratio K")
+    body += _tb_eq(f"K = M<sub>u</sub> / (f<sub>cu</sub> \u00b7 b \u00b7 d\u00b2) = {Mu_Nmm:.0f} / ({fcu:.0f} \u00d7 {bw:.0f} \u00d7 {d:.0f}\u00b2)")
+    body += _tb_result(f"K = {K:.6f}   (K' = {K_lim})")
+    rl = "Singly reinforced" if K <= K_lim else "DOUBLY reinforced"
+    cls = "" if K <= K_lim else "warn"
+    body += _tb_result(f"\u2192 {rl}", cls)
+    body += _tb_span("Lever Arm z")
+    body += _tb_eq(f"z = d[ 0.5 + \u221a(0.25 \u2212 K/0.9) ]  \u2264  0.95d")
+    body += _tb_result(f"z = {z:.2f} mm")
+    body += _tb_span("Required Steel Area")
+    body += _tb_eq(f"A<sub>s,req</sub> = M<sub>u</sub> / (0.87 \u00b7 f<sub>y</sub> \u00b7 z) = {Mu_Nmm:.0f} / (0.87 \u00d7 {fy:.0f} \u00d7 {z:.2f})")
+    body += _tb_result(f"A<sub>s,req</sub> = {fl['As_req']:.2f} mm\u00b2")
+    body += _tb_result(f"Provide: {_e(fl['tension_bars'])}  \u2192  A<sub>s,prov</sub> = {fl['As_prov']:.0f} mm\u00b2", "pass")
+    H.append(_tb_step(3, "Flexural Design (Cl. 3.4.4)", body))
 
-    h("STEP 4 \u2014 SHEAR DESIGN  (BS 8110 Cl. 3.4.5)")
+    # STEP 4: Shear Design
     sh = shear
-    ln(f"  v = Vu/(b\u00b7d) = {Vu*1000:.0f} / ({bw:.0f}\u00d7{d:.0f}) = {sh['v']:.4f} N/mm\u00b2")
-    ln(f"  vc (Table 3.8) = {sh['vc']:.4f} N/mm\u00b2")
-    ln(f"  \u2192 {sh['status']}  |  Links: {sh['links']}")
-    ln()
+    body = _tb_formula("<b>BS 8110 Cl. 3.4.5 \u2014 Shear Design</b>\nv = V<sub>u</sub> / (b \u00b7 d)")
+    body += _tb_eq(f"v = {Vu*1000:.0f} / ({bw:.0f} \u00d7 {d:.0f})")
+    body += _tb_result(f"v = {sh['v']:.4f} N/mm\u00b2")
+    body += _tb_span("Concrete Shear Resistance (Table 3.8)")
+    body += _tb_result(f"v<sub>c</sub> = {sh['vc']:.4f} N/mm\u00b2")
+    sh_cls = "pass" if sh['v'] <= sh['vc'] else "warn"
+    body += _tb_result(f"{_e(sh['status'])}  |  Links: {_e(sh['links'])}", sh_cls)
+    H.append(_tb_step(4, "Shear Design (Cl. 3.4.5)", body))
 
-    h("STEP 5 \u2014 DEFLECTION CHECK  (BS 8110 Cl. 3.4.6)")
+    # STEP 5: Deflection Check
     basic = 20 if "Simply" in beam_system else 26
     mf = min(2.0, fl['As_prov'] / max(fl['As_req'], 1e-9))
-    ln(f"  Basic span/depth ratio (Table 3.9) = {basic}")
-    ln(f"  Modification factor = min(2.0, As_prov/As_req) = min(2.0, {mf:.4f}) = {mf:.4f}")
-    ln(f"  Allowable L/d = {basic} \u00d7 {mf:.4f} = {defl['allowable']:.3f}")
-    ln(f"  Actual L/d    = {L*1000:.0f}/{d:.0f} = {defl['actual']:.3f}")
-    ln(f"  \u2192 {defl['status']}")
-    ln()
-    return W
+    body = _tb_formula("<b>BS 8110 Cl. 3.4.6 \u2014 Deflection Check</b>\nBasic span/depth ratio (Table 3.9)")
+    body += _tb_eq(f"Basic L/d ratio = {basic}")
+    body += _tb_eq(f"Modification factor = min(2.0, A<sub>s,prov</sub>/A<sub>s,req</sub>) = min(2.0, {mf:.4f})")
+    body += _tb_result(f"MF = {mf:.4f}")
+    body += _tb_span("Check")
+    body += _tb_eq(f"Allowable L/d = {basic} \u00d7 {mf:.4f} = <b>{defl['allowable']:.3f}</b>")
+    body += _tb_eq(f"Actual L/d = {L*1000:.0f} / {d:.0f} = <b>{defl['actual']:.3f}</b>")
+    d_cls = "pass" if defl["status"] == "PASS" else "fail"
+    body += _tb_result(f"Deflection: {defl['status']}", d_cls)
+    H.append(_tb_step(5, "Deflection Check (Cl. 3.4.6)", body))
+
+    return H
+
+
+# ─── Frame workings HTML wrapper ─────────────────────────────
+def _frame_workings_html(workings):
+    """Convert frame solver plain-text workings dict to textbook HTML."""
+    import html as _html
+    step_map = [
+        ("fem",      1, "Fixed-End Moments"),
+        ("sd_eqs",   2, "Slope-Deflection Equations"),
+        ("equil",    3, "Equilibrium Equations"),
+        ("solution", 4, "Solution"),
+        ("final",    5, "Final End Moments"),
+        ("check",    6, "Equilibrium Check"),
+    ]
+    parts = []
+    for key, num, title in step_map:
+        raw = workings.get(key, "")
+        if not raw:
+            continue
+        # Strip the old SEP / title lines — they start with ══ or "  STEP"
+        lines = raw.split("\n")
+        cleaned = []
+        for ln in lines:
+            stripped = ln.strip()
+            if stripped.startswith("\u2550") or stripped.startswith("STEP"):
+                continue
+            cleaned.append(ln)
+        text = _html.escape("\n".join(cleaned).strip())
+        body = f"<div class='tb-formula' style='white-space:pre-wrap'>{text}</div>"
+        parts.append(_tb_step(num, title, body))
+    return parts
 
 
 # ─── Sidebar ──────────────────────────────────────────────────
@@ -907,7 +1000,7 @@ def beam_page():
         # Workings
         wk = st.session_state.get("beam_workings", [])
         with st.expander("📐  Full Slope-Deflection Workings", expanded=False):
-            st.markdown("<div class='workings-box'>" + "\n".join(wk) + "</div>", unsafe_allow_html=True)
+            st.markdown("<div class='tb-workings'>" + "".join(wk) + "</div>", unsafe_allow_html=True)
 
         # PDF export
         sett    = st.session_state.get("beam_settlements", {})
@@ -977,7 +1070,7 @@ def beam_page():
                              st.session_state.support_shears.get("left", 0),
                              {"Mid-span": fl}, sh, defl)
         with st.expander("📐  Full Design Workings  (BS 8110)", expanded=False):
-            st.markdown("<div class='workings-box'>" + "\n".join(dw) + "</div>", unsafe_allow_html=True)
+            st.markdown("<div class='tb-workings'>" + "".join(dw) + "</div>", unsafe_allow_html=True)
 
         try:
             pdf_d = export_beam_design_pdf(
@@ -1685,12 +1778,10 @@ def frame_page():
                              results=moments_out, loads=loads)
 
         # ── Full step-by-step workings ─────────────────────────
-        wk_all = "\n\n".join(workings.get(k, "")
-                              for k in ["fem", "sd_eqs", "equil",
-                                        "solution", "final", "check"])
+        frame_wk_html = _frame_workings_html(workings)
         with st.expander("📐  Full Slope-Deflection Workings (all 6 steps)",
                           expanded=False):
-            st.markdown("<div class='workings-box'>" + wk_all + "</div>",
+            st.markdown("<div class='tb-workings'>" + "".join(frame_wk_html) + "</div>",
                         unsafe_allow_html=True)
 
         # ── PDF export ─────────────────────────────────────────
@@ -1832,7 +1923,7 @@ def design_page():
     dw = design_workings(bsys, stype, L, bw, D, cover, fcu, fy, bf, hf, gk, qk, wu,
                          Mu, Vu, flex_zones, sh, defl)
     with st.expander("📐  Full Design Workings  (BS 8110)", expanded=False):
-        st.markdown("<div class='workings-box'>" + "\n".join(dw) + "</div>", unsafe_allow_html=True)
+        st.markdown("<div class='tb-workings'>" + "".join(dw) + "</div>", unsafe_allow_html=True)
 
     try:
         pdf_rc = export_rc_design_pdf(bsys, stype, L, bw, D, cover, fcu, fy, bf, hf,

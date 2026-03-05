@@ -131,15 +131,35 @@ def _fig_img(fig, width=None, height=None):
     if height: kw["height"] = height
     return Image(buf, **kw)
 
+def _strip_html(text):
+    """Strip HTML tags and convert common HTML entities to plain text."""
+    import re
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    text = re.sub(r'<sub>(.*?)</sub>', r'_\1', text)
+    text = re.sub(r'<sup>(.*?)</sup>', r'^\1', text)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    text = text.replace('&nbsp;', ' ')
+    return text
+
+
 def _wk_block(lines, S):
-    """Render workings lines → list of Paragraph flowables."""
+    """Render workings lines → list of Paragraph flowables.
+    Accepts both old-format plain text lines and new HTML fragments."""
     el = []
+    # Detect new HTML format: list of HTML strings containing <div class='tb-
+    is_html = lines and any('<div class=' in str(ln) for ln in lines[:5])
+    if is_html:
+        # Convert HTML fragments to plain text lines
+        joined = "\n".join(lines)
+        plain = _strip_html(joined)
+        lines = plain.split("\n")
     for line in lines:
-        if line.startswith("══") or line.startswith("──"):
+        if line.startswith("\u2550\u2550") or line.startswith("\u2500\u2500"):
             el.append(HRFlowable(width=IW * 0.9, thickness=0.6, color=MGREY, spaceAfter=2))
         elif line.lstrip().startswith("STEP") or (line.startswith("  ") and line.strip().startswith("STEP")):
             el.append(Paragraph(line.strip(), S["h2"]))
-        elif line == "":
+        elif line.strip() == "":
             el.append(Spacer(1, 3))
         else:
             el.append(Paragraph(line.replace("<","&lt;").replace(">","&gt;"), S["eq"]))
